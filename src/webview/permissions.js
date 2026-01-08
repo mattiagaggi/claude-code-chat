@@ -9,14 +9,14 @@ function addPermissionRequestMessage(data) {
 	messageDiv.id = `permission-${data.id}`;
 	messageDiv.dataset.status = data.status || 'pending';
 
-	const toolName = data.tool || 'Unknown Tool';
+	const toolName = data.toolName || data.tool || 'Unknown Tool';
 	const status = data.status || 'pending';
 
 	// Create always allow button text with command styling for Bash
 	let alwaysAllowText = `Always allow ${toolName}`;
 	let alwaysAllowTooltip = '';
-	if (toolName === 'Bash' && data.pattern) {
-		const pattern = data.pattern;
+	const pattern = data.pattern || (data.input && data.input.command);
+	if (toolName === 'Bash' && pattern) {
 		// Remove the asterisk for display - show "npm i" instead of "npm i *"
 		const displayPattern = pattern.replace(' *', '');
 		const truncatedPattern = displayPattern.length > 30 ? displayPattern.substring(0, 30) + '...' : displayPattern;

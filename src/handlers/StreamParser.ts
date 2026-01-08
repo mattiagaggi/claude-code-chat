@@ -91,6 +91,25 @@ export class StreamParser {
 			const text = data.text || '';
 			this.currentMessageContent += text;
 			this.callbacks.onTextDelta?.(text);
+		} else if (data.type === 'assistant') {
+			// Handle assistant message (contains full message with content array)
+			if (data.message?.content) {
+				// Process all content items
+				for (const contentItem of data.message.content) {
+					if (contentItem.type === 'text' && contentItem.text) {
+						this.callbacks.onMessage?.(contentItem.text);
+					} else if (contentItem.type === 'tool_use') {
+						// Format tool use for display
+						const toolData = {
+							toolName: contentItem.name,
+							toolInfo: contentItem.name,
+							rawInput: contentItem.input,
+							id: contentItem.id
+						};
+						this.callbacks.onToolUse?.(toolData);
+					}
+				}
+			}
 		} else if (data.type === 'message') {
 			// Full message received
 			if (this.currentMessageContent) {

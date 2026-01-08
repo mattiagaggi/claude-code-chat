@@ -453,8 +453,12 @@ class ClaudeChatProvider {
 	/**
 	 * Handle control request (permission prompt)
 	 */
-	private async handleControlRequest(request: any) {
-		const { request_id, tool_name, input } = request;
+	private async handleControlRequest(requestData: any) {
+		const request_id = requestData.request_id;
+		const tool_name = requestData.request?.tool_name || requestData.tool_name;
+		const input = requestData.request?.input || requestData.input;
+
+		console.log('[Extension] Control request:', { request_id, tool_name, input });
 
 		// Check if auto-approved
 		if (await this.permissionManager.shouldAutoApprove(tool_name, input)) {
@@ -463,7 +467,7 @@ class ClaudeChatProvider {
 		}
 
 		// Store pending request
-		this.pendingPermissions.set(request_id, request);
+		this.pendingPermissions.set(request_id, requestData);
 
 		// Show UI prompt
 		this.postMessage({
@@ -472,7 +476,7 @@ class ClaudeChatProvider {
 				id: request_id,
 				toolName: tool_name,
 				input,
-				suggestions: request.suggestions
+				suggestions: requestData.request?.suggestions || requestData.suggestions
 			}
 		});
 	}
@@ -484,8 +488,11 @@ class ClaudeChatProvider {
 		const request = this.pendingPermissions.get(id);
 		if (!request) return;
 
+		const tool_name = request.request?.tool_name || request.tool_name;
+		const input = request.request?.input || request.input;
+
 		if (approved && alwaysAllow) {
-			this.permissionManager.addAlwaysAllowPermission(request.tool_name, request.input);
+			this.permissionManager.addAlwaysAllowPermission(tool_name, input);
 		}
 
 		this.sendPermissionResponse(id, approved);

@@ -55,6 +55,27 @@ window.addEventListener('message', event => {
 			updateStatusWithTotals();
 			break;
 
+		case 'assistantMessage':
+			// Handle assistant message from Claude
+			currentStreamingMessageId = null;
+			if (message.data && message.data.trim()) {
+				addMessage(parseSimpleMarkdown(message.data), 'claude');
+			}
+			updateStatusWithTotals();
+			break;
+
+		case 'textDelta':
+			// Handle streaming text delta
+			if (message.data) {
+				const parsedContent = parseSimpleMarkdown(message.data);
+				if (!appendToLastClaudeMessage(parsedContent)) {
+					// Start new streaming message
+					currentStreamingMessageId = Date.now().toString();
+					addMessage(parsedContent, 'claude');
+				}
+			}
+			break;
+
 		case 'userInput':
 			// Reset streaming for new user message
 			currentStreamingMessageId = null;
@@ -275,6 +296,19 @@ window.addEventListener('message', event => {
 
 		case 'permissionsData':
 			renderPermissions(message.data);
+			break;
+
+		case 'sessionCleared':
+			// Clear the messages display
+			const messagesDiv = document.getElementById('messages');
+			messagesDiv.innerHTML = '';
+
+			// Reset state
+			currentStreamingMessageId = null;
+
+			// Show ready message
+			addMessage('New chat started. Ready for your message!', 'system');
+			updateStatusWithTotals();
 			break;
 	}
 });

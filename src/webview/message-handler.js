@@ -119,9 +119,8 @@ window.addEventListener('message', event => {
 			break;
 
 		case 'clearLoading':
-			const messages = messagesDiv.children;
-			if (messages.length > 0) {
-				const lastMessage = messages[messages.length - 1];
+			if (messagesDiv.children.length > 0) {
+				const lastMessage = messagesDiv.children[messagesDiv.children.length - 1];
 				if (lastMessage.classList.contains('system')) {
 					lastMessage.remove();
 				}

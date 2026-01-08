@@ -1071,16 +1071,13 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 						const item = clipboardData.items[i];
 						if (item.type.startsWith('image/')) {
 							// Found an image, handle it
-							console.log('Image detected in clipboard:', item.type);
 							hasImage = true;
 							const blob = item.getAsFile();
 							if (blob) {
-								console.log('Converting image blob to base64...');
 								// Convert blob to base64
 								const reader = new FileReader();
 								reader.onload = function(event) {
 									const base64Data = event.target.result;
-									console.log('Sending image to extension for file creation');
 									// Send to extension to create file
 									vscode.postMessage({
 										type: 'createImageFile',
@@ -1112,7 +1109,6 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 					try {
 						text = await navigator.clipboard.readText();
 					} catch (err) {
-						console.log('Clipboard API failed:', err);
 					}
 				}
 				
@@ -2180,8 +2176,6 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 						messageInput.focus();
 						adjustTextareaHeight();
 						
-						console.log('Inserted image path:', message.data.filePath);
-						console.log('Full textarea value:', messageInput.value);
 					}
 					break;
 					
@@ -2230,19 +2224,16 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 				case 'accountInfo':
 					// Store subscription type to determine cost vs plan display
 					subscriptionType = message.data.subscriptionType || null;
-					console.log('Account info received:', subscriptionType);
 					// Update status bar to reflect plan type
 					updateStatusWithTotals();
 					break;
 					
 				case 'sessionResumed':
-					console.log('Session resumed:', message.data);
 					showSessionInfo(message.data.sessionId);
 					addMessage(\`📝 Resumed previous session\\n🆔 Session ID: \${message.data.sessionId}\\n💡 Your conversation history is preserved\`, 'system');
 					break;
 					
 				case 'sessionCleared':
-					console.log('Session cleared');
 					// Clear all messages from UI
 					messagesDiv.innerHTML = '';
 					hideSessionInfo();
@@ -2590,7 +2581,6 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 		}
 
 		function restoreToCommit(commitSha) {
-			console.log('Restore button clicked for commit:', commitSha);
 			vscode.postMessage({
 				type: 'restoreCommit',
 				commitSha: commitSha

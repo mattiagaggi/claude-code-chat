@@ -51,7 +51,6 @@ export function activate(context: vscode.ExtensionContext) {
 	statusBarItem.show();
 
 	context.subscriptions.push(disposable, loadConversationDisposable, configChangeDisposable, statusBarItem);
-	console.log('Claude Code Chat extension activation completed successfully!');
 }
 
 export function deactivate() { }
@@ -96,7 +95,6 @@ class ClaudeChatWebviewProvider implements vscode.WebviewViewProvider {
 			if (webviewView.visible) {
 				// Close main panel when sidebar becomes visible
 				if (this._chatProvider._panel) {
-					console.log('Closing main panel because sidebar became visible');
 					this._chatProvider._panel.dispose();
 					this._chatProvider._panel = undefined;
 				}
@@ -394,7 +392,6 @@ class ClaudeChatProvider {
 	public showInWebview(webview: vscode.Webview, webviewView?: vscode.WebviewView) {
 		// Close main panel if it's open
 		if (this._panel) {
-			console.log('Closing main panel because sidebar is opening');
 			this._panel.dispose();
 			this._panel = undefined;
 		}
@@ -437,15 +434,6 @@ class ClaudeChatProvider {
 	}
 
 	private async _sendMessageToClaude(message: string, planMode?: boolean, thinkingMode?: boolean) {
-		// If already processing, cancel the current operation
-		if (this._isProcessing && this._abortController) {
-			this._abortController.abort();
-			this._sendAndSaveMessage({
-				type: 'assistantMessage',
-				data: '⚠️ _Previous operation cancelled - starting new request..._'
-			});
-		}
-
 		const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
 		const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : process.cwd();
 

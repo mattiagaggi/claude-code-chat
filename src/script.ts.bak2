@@ -2092,20 +2092,12 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 							displayData = displayData.replace(usageLimitMatch[0], \`Claude AI usage limit reached: \${readableDate}\`);
 						}
 						
-					// Try to append to existing streaming message, or create new one
-					const parsedContent = parseSimpleMarkdown(displayData);
-					if (!appendToLastClaudeMessage(parsedContent)) {
-						// Start new streaming message
-						currentStreamingMessageId = Date.now().toString();
-						addMessage(parsedContent, 'claude');
-					}
+						addMessage(parseSimpleMarkdown(displayData), 'claude');
 					}
 					updateStatusWithTotals();
 					break;
 					
 				case 'userInput':
-ttttt// Reset streaming for new user message
-tttttcurrentStreamingMessageId = null;
 					if (message.data.trim()) {
 						addMessage(parseSimpleMarkdown(message.data), 'user');
 					}

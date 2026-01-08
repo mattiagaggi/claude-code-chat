@@ -2104,8 +2104,6 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 					break;
 					
 				case 'userInput':
-ttttt// Reset streaming for new user message
-tttttcurrentStreamingMessageId = null;
 					if (message.data.trim()) {
 						addMessage(parseSimpleMarkdown(message.data), 'user');
 					}

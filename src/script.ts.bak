@@ -1,4 +1,4 @@
-const getScript = (isTelemetryEnabled: boolean) => `<script>
+1const getScript = (isTelemetryEnabled: boolean) => `<script>
 		const vscode = acquireVsCodeApi();
 		const messagesDiv = document.getElementById('messages');
 		const messageInput = document.getElementById('messageInput');
@@ -149,10 +149,6 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 			}
 			
 			messagesDiv.appendChild(messageDiv);
-			// Mark Claude messages with streaming ID for appending
-			if (type === 'claude') {
-				messageDiv.dataset.streamingId = currentStreamingMessageId;
-			}
 			moveProcessingIndicatorToLast();
 			scrollToBottomIfNeeded(messagesDiv, shouldScroll);
 		}
@@ -2092,20 +2088,12 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 							displayData = displayData.replace(usageLimitMatch[0], \`Claude AI usage limit reached: \${readableDate}\`);
 						}
 						
-					// Try to append to existing streaming message, or create new one
-					const parsedContent = parseSimpleMarkdown(displayData);
-					if (!appendToLastClaudeMessage(parsedContent)) {
-						// Start new streaming message
-						currentStreamingMessageId = Date.now().toString();
-						addMessage(parsedContent, 'claude');
-					}
+						addMessage(parseSimpleMarkdown(displayData), 'claude');
 					}
 					updateStatusWithTotals();
 					break;
 					
 				case 'userInput':
-ttttt// Reset streaming for new user message
-tttttcurrentStreamingMessageId = null;
 					if (message.data.trim()) {
 						addMessage(parseSimpleMarkdown(message.data), 'user');
 					}

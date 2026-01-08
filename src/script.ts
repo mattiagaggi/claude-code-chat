@@ -252,32 +252,6 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 			scrollToBottomIfNeeded(messagesDiv, shouldScroll);
 		}
 
-		function createExpandableInput(toolInput, rawInput) {
-			try {
-				let html = toolInput.replace(/\\[expand\\]/g, '<span class="expand-btn" onclick="toggleExpand(this)">expand</span>');
-				
-				// Store raw input data for expansion
-				if (rawInput && typeof rawInput === 'object') {
-					let btnIndex = 0;
-					html = html.replace(/<span class="expand-btn"[^>]*>expand<\\/span>/g, (match) => {
-						const keys = Object.keys(rawInput);
-						const key = keys[btnIndex] || '';
-						const value = rawInput[key] || '';
-						const valueStr = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-						const escapedValue = valueStr.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-						btnIndex++;
-						return \`<span class="expand-btn" data-key="\${key}" data-value="\${escapedValue}" onclick="toggleExpand(this)">expand</span>\`;
-					});
-				}
-				
-				return html;
-			} catch (error) {
-				console.error('Error creating expandable input:', error);
-				return toolInput;
-			}
-		}
-
-
 		function addToolResultMessage(data) {
 			const messagesDiv = document.getElementById('messages');
 			const shouldScroll = shouldAutoScroll(messagesDiv);

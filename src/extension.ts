@@ -18,11 +18,9 @@ class DiffContentProvider implements vscode.TextDocumentContentProvider {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-	console.log('Claude Code Chat extension is being activated!');
 	const provider = new ClaudeChatProvider(context.extensionUri, context);
 
 	const disposable = vscode.commands.registerCommand('claude-code-chat.openChat', (column?: vscode.ViewColumn) => {
-		console.log('Claude Code Chat command executed!');
 		provider.show(column);
 	});
 
@@ -41,7 +39,6 @@ export function activate(context: vscode.ExtensionContext) {
 	// Listen for configuration changes
 	const configChangeDisposable = vscode.workspace.onDidChangeConfiguration(event => {
 		if (event.affectsConfiguration('claudeCodeChat.wsl')) {
-			console.log('WSL configuration changed, starting new session');
 			provider.newSessionOnConfigChange();
 		}
 	});
@@ -119,12 +116,9 @@ class ClaudeChatProvider {
 	private _totalCost: number = 0;
 	private _totalTokensInput: number = 0;
 	private _totalTokensOutput: number = 0;
-	private _requestCount: number = 0;
 	private _subscriptionType: string | undefined;  // 'pro', 'max', or undefined for API users
-	private _accountInfoFetchedThisSession: boolean = false;  // Track if we fetched account info this session
 	private _currentSessionId: string | undefined;
 	private _backupRepoPath: string | undefined;
-	private _commits: Array<{ id: string, sha: string, message: string, timestamp: string }> = [];
 	private _conversationsPath: string | undefined;
 	// Pending permission requests from stdio control_request messages
 	private _pendingPermissionRequests: Map<string, {
@@ -239,16 +233,6 @@ class ClaudeChatProvider {
 	}
 
 	private _sendReadyMessage() {
-		// Send current session info if available
-		/*if (this._currentSessionId) {
-			this._postMessage({
-				type: 'sessionResumed',
-				data: {
-					sessionId: this._currentSessionId
-				}
-			});
-		}*/
-
 		this._postMessage({
 			type: 'ready',
 			data: this._isProcessing ? 'Claude is working...' : 'Ready to chat with Claude Code! Type your message below.'
@@ -292,9 +276,6 @@ class ClaudeChatProvider {
 				return;
 			case 'newSession':
 				this._newSession();
-				return;
-			case 'restoreCommit':
-				this._restoreToCommit(message.commitSha);
 				return;
 			case 'getConversationList':
 				this._sendConversationList();
@@ -503,14 +484,6 @@ class ClaudeChatProvider {
 			type: 'setProcessing',
 			data: { isProcessing: true }
 		});
-
-		// Create backup commit before Claude makes changes
-		try {
-			await this._createBackupCommit(message);
-		}
-		catch (e) {
-			console.log("error", e);
-		}
 
 		// Show loading indicator
 		this._postMessage({
@@ -1083,7 +1056,6 @@ class ClaudeChatProvider {
 					});
 
 					// Update cumulative tracking
-					this._requestCount++;
 					if (jsonData.total_cost_usd) {
 						this._totalCost += jsonData.total_cost_usd;
 					}
@@ -1101,7 +1073,6 @@ class ClaudeChatProvider {
 							totalCost: this._totalCost,
 							totalTokensInput: this._totalTokensInput,
 							totalTokensOutput: this._totalTokensOutput,
-							requestCount: this._requestCount,
 							currentCost: jsonData.total_cost_usd,
 							currentDuration: jsonData.duration_ms,
 							currentTurns: jsonData.num_turns
@@ -1128,8 +1099,7 @@ class ClaudeChatProvider {
 		// Clear current session
 		this._currentSessionId = undefined;
 
-		// Clear commits and conversation
-		this._commits = [];
+		// Clear conversation
 		this._currentConversation = [];
 		this._conversationStartTime = undefined;
 
@@ -1137,7 +1107,6 @@ class ClaudeChatProvider {
 		this._totalCost = 0;
 		this._totalTokensInput = 0;
 		this._totalTokensOutput = 0;
-		this._requestCount = 0;
 
 		// Notify webview to clear all messages and reset session
 		this._postMessage({
@@ -1196,115 +1165,6 @@ class ClaudeChatProvider {
 			}
 		} catch (error: any) {
 			console.error('Failed to initialize backup repository:', error.message);
-		}
-	}
-
-	private async _createBackupCommit(userMessage: string): Promise<void> {
-		try {
-			const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-			if (!workspaceFolder || !this._backupRepoPath) { return; }
-
-			const workspacePath = workspaceFolder.uri.fsPath;
-			const now = new Date();
-			const timestamp = now.toISOString().replace(/[:.]/g, '-');
-			const displayTimestamp = now.toISOString();
-			const commitMessage = `Before: ${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}`;
-
-			// Add all files using git-dir and work-tree (excludes .git automatically)
-			await exec(`git --git-dir="${this._backupRepoPath}" --work-tree="${workspacePath}" add -A`);
-
-			// Check if this is the first commit (no HEAD exists yet)
-			let isFirstCommit = false;
-			try {
-				await exec(`git --git-dir="${this._backupRepoPath}" rev-parse HEAD`);
-			} catch {
-				isFirstCommit = true;
-			}
-
-			// Check if there are changes to commit
-			const { stdout: status } = await exec(`git --git-dir="${this._backupRepoPath}" --work-tree="${workspacePath}" status --porcelain`);
-
-			// Always create a checkpoint, even if no files changed
-			let actualMessage;
-			if (isFirstCommit) {
-				actualMessage = `Initial backup: ${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}`;
-			} else if (status.trim()) {
-				actualMessage = commitMessage;
-			} else {
-				actualMessage = `Checkpoint (no changes): ${userMessage.substring(0, 50)}${userMessage.length > 50 ? '...' : ''}`;
-			}
-
-			// Create commit with --allow-empty to ensure checkpoint is always created
-			await exec(`git --git-dir="${this._backupRepoPath}" --work-tree="${workspacePath}" commit --allow-empty -m "${actualMessage}"`);
-			const { stdout: sha } = await exec(`git --git-dir="${this._backupRepoPath}" rev-parse HEAD`);
-
-			// Store commit info
-			const commitInfo = {
-				id: `commit-${timestamp}`,
-				sha: sha.trim(),
-				message: actualMessage,
-				timestamp: displayTimestamp
-			};
-
-			this._commits.push(commitInfo);
-
-			// Show restore option in UI and save to conversation
-			this._sendAndSaveMessage({
-				type: 'showRestoreOption',
-				data: commitInfo
-			});
-
-			console.log(`Created backup commit: ${commitInfo.sha.substring(0, 8)} - ${actualMessage}`);
-		} catch (error: any) {
-			console.error('Failed to create backup commit:', error.message);
-		}
-	}
-
-
-	private async _restoreToCommit(commitSha: string): Promise<void> {
-		try {
-			const commit = this._commits.find(c => c.sha === commitSha);
-			if (!commit) {
-				this._postMessage({
-					type: 'restoreError',
-					data: 'Commit not found'
-				});
-				return;
-			}
-
-			const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-			if (!workspaceFolder || !this._backupRepoPath) {
-				vscode.window.showErrorMessage('No workspace folder or backup repository available.');
-				return;
-			}
-
-			const workspacePath = workspaceFolder.uri.fsPath;
-
-			this._postMessage({
-				type: 'restoreProgress',
-				data: 'Restoring files from backup...'
-			});
-
-			// Restore files directly to workspace using git checkout
-			await exec(`git --git-dir="${this._backupRepoPath}" --work-tree="${workspacePath}" checkout ${commitSha} -- .`);
-
-			vscode.window.showInformationMessage(`Restored to commit: ${commit.message}`);
-
-			this._sendAndSaveMessage({
-				type: 'restoreSuccess',
-				data: {
-					message: `Successfully restored to: ${commit.message}`,
-					commitSha: commitSha
-				}
-			});
-
-		} catch (error: any) {
-			console.error('Failed to restore commit:', error.message);
-			vscode.window.showErrorMessage(`Failed to restore commit: ${error.message}`);
-			this._postMessage({
-				type: 'restoreError',
-				data: `Failed to restore: ${error.message}`
-			});
 		}
 	}
 
@@ -2543,8 +2403,7 @@ class ClaudeChatProvider {
 						data: {
 							totalCost: this._totalCost,
 							totalTokensInput: this._totalTokensInput,
-							totalTokensOutput: this._totalTokensOutput,
-							requestCount: this._requestCount
+							totalTokensOutput: this._totalTokensOutput
 						}
 					});
 

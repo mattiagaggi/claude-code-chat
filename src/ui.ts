@@ -14,11 +14,6 @@ const getHtml = (isTelemetryEnabled: boolean) => `<!DOCTYPE html>
 	<div class="header">
 		<div style="display: flex; align-items: center;">
 			<h2>Claude Code Chat</h2>
-			<!-- <div id="sessionInfo" class="session-badge" style="display: none;">
-				<span class="session-icon">💬</span>
-				<span id="sessionId">-</span>
-				<span class="session-label">session</span>
-			</div> -->
 		</div>
 		<div style="display: flex; gap: 8px; align-items: center;">
 			<div id="sessionStatus" class="session-status" style="display: none;">No session</div>

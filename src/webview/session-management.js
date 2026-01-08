@@ -141,17 +141,35 @@ function displayConversationList(conversations) {
 		const preview = conv.summary || conv.firstUserMessage || 'New conversation';
 
 		convItem.innerHTML = `
-			<div class="conversation-preview">${preview}</div>
-			<div class="conversation-date">${dateStr}</div>
+			<div class="conversation-content">
+				<div class="conversation-preview">${preview}</div>
+				<div class="conversation-date">${dateStr}</div>
+			</div>
+			<div class="conversation-actions">
+				<button class="btn outlined small open-in-panel-btn" onclick="event.stopPropagation(); openInNewPanel('${conv.filename}')" title="Open in new panel">
+					📑
+				</button>
+			</div>
 		`;
 
 		convItem.addEventListener('click', (e) => {
-			console.log('[conversation-click] Clicked conversation:', conv.filename);
-			e.stopPropagation();
-			loadConversation(conv.filename);
+			// Only load if not clicking on a button
+			if (!e.target.classList.contains('open-in-panel-btn')) {
+				console.log('[conversation-click] Clicked conversation:', conv.filename);
+				e.stopPropagation();
+				loadConversation(conv.filename);
+			}
 		});
 
 		conversationList.appendChild(convItem);
+	});
+}
+
+function openInNewPanel(filename) {
+	console.log('[openInNewPanel] Opening conversation in new panel:', filename);
+	vscode.postMessage({
+		type: 'openConversationInNewPanel',
+		filename: filename
 	});
 }
 

@@ -3438,3 +3438,39 @@
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
+
+/* Conversation item with actions */
+.conversation-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.conversation-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.conversation-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.conversation-item:hover .conversation-actions {
+    opacity: 1;
+}
+
+.btn.small {
+    padding: 4px 8px;
+    font-size: 14px;
+    min-width: auto;
+}
+
+.open-in-panel-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}

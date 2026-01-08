@@ -311,6 +311,30 @@ class ClaudeChatProvider {
 				this.postMessage({ type: 'setProcessing', data: { isProcessing: false } });
 				this.postMessage({ type: 'clearLoading' });
 				this.isProcessing = false;
+
+				// Extract and send usage info from result
+				if (data.input_tokens || data.output_tokens || data.total_cost_usd) {
+					const inputTokens = data.input_tokens || 0;
+					const outputTokens = data.output_tokens || 0;
+					const cost = data.total_cost_usd || 0;
+
+					console.log('[Extension] Result usage data:', { inputTokens, outputTokens, cost });
+
+					// Update conversation manager
+					this.conversationManager.updateUsage(cost, inputTokens, outputTokens);
+
+					// Send to UI
+					const session = this.conversationManager.getCurrentSession();
+					console.log('[Extension] Sending usage to UI:', session);
+					this.postMessage({
+						type: 'usage',
+						data: {
+							inputTokens: session.totalTokensInput,
+							outputTokens: session.totalTokensOutput,
+							totalCost: session.totalCost
+						}
+					});
+				}
 			},
 			onError: (error: string) => {
 				this.sendAndSaveMessage({ type: 'error', data: error });
@@ -556,6 +580,10 @@ class ClaudeChatProvider {
 		this.conversationManager.startConversation();
 		this.postMessage({ type: 'sessionCleared' });
 		this.postMessage({ type: 'setProcessing', data: { isProcessing: false } });
+
+		// Refresh conversation history
+		const conversations = this.conversationManager.getConversationList();
+		this.postMessage({ type: 'conversationList', data: conversations });
 	}
 
 	/**
@@ -583,6 +611,10 @@ class ClaudeChatProvider {
 					requestCount: session.messageCount
 				}
 			});
+
+			// Refresh conversation history
+			const conversations = this.conversationManager.getConversationList();
+			this.postMessage({ type: 'conversationList', data: conversations });
 		}
 	}
 
@@ -633,6 +665,7 @@ class ClaudeChatProvider {
 	// Simplified helper methods (implementation details)
 	private sendConversationList() {
 		const conversations = this.conversationManager.getConversationList();
+		console.log('[Extension] Sending conversation list:', conversations.length, 'conversations');
 		this.postMessage({ type: 'conversationList', data: conversations });
 	}
 
@@ -687,15 +720,76 @@ class ClaudeChatProvider {
 	}
 
 	private async loadMCPServers() {
-		// Implementation
+		const mcpConfigPath = this.getMCPConfigPath();
+		if (!mcpConfigPath) {
+			this.postMessage({ type: 'mcpServersLoaded', servers: {} });
+			return;
+		}
+
+		try {
+			const fs = require('fs').promises;
+			const data = await fs.readFile(mcpConfigPath, 'utf8');
+			const config = JSON.parse(data);
+			this.postMessage({ type: 'mcpServersLoaded', servers: config.mcpServers || {} });
+		} catch (error: any) {
+			console.error('Failed to load MCP servers:', error.message);
+			this.postMessage({ type: 'mcpServersLoaded', servers: {} });
+		}
 	}
 
 	private async saveMCPServer(name: string, config: any) {
-		// Implementation
+		const mcpConfigPath = this.getMCPConfigPath();
+		if (!mcpConfigPath) {
+			return;
+		}
+
+		try {
+			const fs = require('fs').promises;
+			let mcpConfig: any = { mcpServers: {} };
+
+			// Load existing config
+			try {
+				const data = await fs.readFile(mcpConfigPath, 'utf8');
+				mcpConfig = JSON.parse(data);
+				if (!mcpConfig.mcpServers) {
+					mcpConfig.mcpServers = {};
+				}
+			} catch {
+				// File doesn't exist yet
+			}
+
+			// Add/update server
+			mcpConfig.mcpServers[name] = config;
+
+			// Save config
+			await fs.writeFile(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+
+			// Reload servers in UI
+			this.loadMCPServers();
+		} catch (error: any) {
+			console.error('Failed to save MCP server:', error.message);
+		}
 	}
 
 	private async deleteMCPServer(name: string) {
-		// Implementation
+		const mcpConfigPath = this.getMCPConfigPath();
+		if (!mcpConfigPath) {
+			return;
+		}
+
+		try {
+			const fs = require('fs').promises;
+			const data = await fs.readFile(mcpConfigPath, 'utf8');
+			const mcpConfig = JSON.parse(data);
+
+			if (mcpConfig.mcpServers && mcpConfig.mcpServers[name]) {
+				delete mcpConfig.mcpServers[name];
+				await fs.writeFile(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+				this.loadMCPServers();
+			}
+		} catch (error: any) {
+			console.error('Failed to delete MCP server:', error.message);
+		}
 	}
 
 	private async saveCustomSnippet(snippet: any) {

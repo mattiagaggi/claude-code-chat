@@ -177,12 +177,20 @@ function stopRequest() {
 
 function disableButtons() {
 	const sendBtn = document.getElementById('sendBtn');
-	if (sendBtn) sendBtn.disabled = true;
+	if (sendBtn) {
+		// Keep send button enabled so users can queue messages
+		// Just update the visual appearance
+		sendBtn.classList.add('queuing-mode');
+		sendBtn.title = 'Send message (will queue until Claude finishes)';
+	}
 }
 
 function enableButtons() {
 	const sendBtn = document.getElementById('sendBtn');
-	if (sendBtn) sendBtn.disabled = false;
+	if (sendBtn) {
+		sendBtn.classList.remove('queuing-mode');
+		sendBtn.title = 'Send message';
+	}
 }
 
 function toggleExpand(button) {

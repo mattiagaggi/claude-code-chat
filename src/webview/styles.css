@@ -1570,6 +1570,15 @@
         cursor: not-allowed;
     }
 
+    .send-btn.queuing-mode {
+        background-color: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.3));
+        opacity: 0.8;
+    }
+
+    .send-btn.queuing-mode:hover {
+        background-color: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.4));
+    }
+
     .secondary-button {
         background-color: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
         color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));

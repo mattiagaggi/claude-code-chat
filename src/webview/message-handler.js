@@ -101,6 +101,20 @@ window.addEventListener('message', event => {
 				hideStopButton();
 				enableButtons();
 				hideProcessingIndicator();
+
+				// Send queued message if one exists
+				if (queuedMessage) {
+					const queued = queuedMessage;
+					queuedMessage = null;
+
+					// Send the queued message
+					vscode.postMessage({
+						type: 'message',
+						content: queued.content,
+						planMode: queued.planMode,
+						thinkingMode: queued.thinkingMode
+					});
+				}
 			}
 			updateStatusWithTotals();
 			break;
@@ -317,9 +331,13 @@ window.addEventListener('message', event => {
 			msgDiv.innerHTML = '';
 			currentStreamingMessageId = null;
 
+			console.log('[conversationLoaded] Loading conversation:', message.data);
+
 			// Load conversation messages
 			if (message.data && message.data.messages) {
+				console.log('[conversationLoaded] Found', message.data.messages.length, 'messages');
 				message.data.messages.forEach(msg => {
+					console.log('[conversationLoaded] Processing message:', msg.messageType, msg.data);
 					if (msg.messageType === 'userInput') {
 						addMessage(parseSimpleMarkdown(msg.data), 'user');
 					} else if (msg.messageType === 'output' || msg.messageType === 'assistantMessage') {
@@ -345,8 +363,30 @@ window.addEventListener('message', event => {
 			}
 			updateStatusWithTotals();
 
+			// Scroll to bottom
+			const messagesContainer = document.getElementById('messages');
+			if (messagesContainer) {
+				messagesContainer.scrollTop = messagesContainer.scrollHeight;
+			}
+
 			// Close history view
 			toggleConversationHistory();
+			break;
+
+		case 'mcpServersLoaded':
+			displayMCPServers(message.servers || {});
+			break;
+
+		case 'usage':
+			if (message.data) {
+				console.log('[usage] Received usage data:', message.data);
+				totalTokensInput = message.data.inputTokens || 0;
+				totalTokensOutput = message.data.outputTokens || 0;
+				totalCost = message.data.totalCost || 0;
+				requestCount = (requestCount || 0) + 1;
+				console.log('[usage] Updated totals:', { totalTokensInput, totalTokensOutput, totalCost, requestCount });
+				updateStatusWithTotals();
+			}
 			break;
 	}
 });

@@ -109,7 +109,25 @@ function addMessage(content, type = 'claude') {
 
 function sendMessage() {
 	const message = messageInput.value.trim();
-	if (message && !isProcessing) {
+	if (!message) return;
+
+	if (isProcessing) {
+		// Queue the message if Claude is still processing
+		queuedMessage = {
+			content: message,
+			planMode: planModeEnabled,
+			thinkingMode: thinkingModeEnabled
+		};
+		messageInput.value = '';
+		adjustTextareaHeight();
+
+		// Show visual feedback that message is queued
+		const status = document.getElementById('statusText');
+		if (status) {
+			status.textContent = 'Message queued - will send when Claude finishes...';
+		}
+	} else {
+		// Send immediately if not processing
 		vscode.postMessage({
 			type: 'message',
 			content: message,

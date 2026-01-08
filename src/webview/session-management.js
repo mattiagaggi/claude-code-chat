@@ -113,14 +113,17 @@ function loadConversation(conversationId) {
 }
 
 function displayConversationList(conversations) {
+	console.log('[displayConversationList] Received conversations:', conversations);
 	const conversationList = document.getElementById('conversationList');
 	conversationList.innerHTML = '';
 
 	if (!conversations || conversations.length === 0) {
+		console.log('[displayConversationList] No conversations found');
 		conversationList.innerHTML = '<div class="no-conversations">No conversation history found</div>';
 		return;
 	}
 
+	console.log('[displayConversationList] Displaying', conversations.length, 'conversations');
 	conversations.forEach(conv => {
 		const convItem = document.createElement('div');
 		convItem.className = 'conversation-item';

@@ -33,6 +33,11 @@ export class ConversationManager {
 	private _totalTokensOutput: number = 0;
 
 	constructor(private readonly _context: vscode.ExtensionContext) {
+		// Set path synchronously
+		const homeDir = require('os').homedir();
+		this._conversationsPath = path.join(homeDir, '.claude', 'conversations');
+
+		// Do async initialization
 		this._initialize();
 	}
 
@@ -40,16 +45,16 @@ export class ConversationManager {
 	 * Initialize conversations directory
 	 */
 	private async _initialize(): Promise<void> {
-		const homeDir = require('os').homedir();
-		const conversationsDir = path.join(homeDir, '.claude', 'conversations');
+		if (!this._conversationsPath) {
+			return;
+		}
 
 		try {
 			const fs = require('fs').promises;
-			await fs.mkdir(conversationsDir, { recursive: true });
-			this._conversationsPath = conversationsDir;
+			await fs.mkdir(this._conversationsPath, { recursive: true });
 
 			// Load conversation index
-			const indexPath = path.join(conversationsDir, 'index.json');
+			const indexPath = path.join(this._conversationsPath, 'index.json');
 			try {
 				const indexData = await fs.readFile(indexPath, 'utf8');
 				this._conversationIndex = JSON.parse(indexData);
@@ -105,9 +110,14 @@ export class ConversationManager {
 		const filename = `conversation-${Date.now()}.json`;
 		const filepath = path.join(this._conversationsPath, filename);
 
+		// Use conversation start time, or first message timestamp, or current time
+		const startTime = this._conversationStartTime
+			|| this._currentConversation[0]?.timestamp
+			|| new Date().toISOString();
+
 		const conversationData: ConversationData = {
 			sessionId: this._currentSessionId || '',
-			startTime: this._conversationStartTime,
+			startTime: startTime,
 			endTime: new Date().toISOString(),
 			messageCount: this._currentConversation.length,
 			totalCost: this._totalCost,
@@ -140,11 +150,13 @@ export class ConversationManager {
 			return 'New conversation';
 		}
 
-		// Get first meaningful user message
-		const firstMessage = userMessages[0]?.data || '';
+		// If we have 2+ user messages, use the second one as it's usually more descriptive
+		// (first is often just "hi" or "hello")
+		const messageToUse = userMessages.length >= 2 ? userMessages[1].data : userMessages[0].data;
+		let summary = messageToUse || '';
 
 		// Clean up the message - remove file references, paths, and extra whitespace
-		let summary = firstMessage
+		summary = summary
 			.replace(/@[\w\/\.\-]+\s*/g, '') // Remove @file references
 			.replace(/\/[\w\/\.\-]+/g, '') // Remove file paths
 			.replace(/\s+/g, ' ') // Normalize whitespace
@@ -261,9 +273,12 @@ export class ConversationManager {
 	 */
 	public getConversationList(): ConversationIndex[] {
 		// Sort by start time (most recent first)
-		return [...this._conversationIndex].sort((a, b) =>
-			new Date(b.startTime).getTime() - new Date(a.startTime).getTime()
-		);
+		// Use endTime as fallback if startTime is empty
+		return [...this._conversationIndex].sort((a, b) => {
+			const timeA = a.startTime || a.endTime;
+			const timeB = b.startTime || b.endTime;
+			return new Date(timeB).getTime() - new Date(timeA).getTime();
+		});
 	}
 
 	/**

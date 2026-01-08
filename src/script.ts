@@ -2099,13 +2099,13 @@ const getScript = (isTelemetryEnabled: boolean) => `<script>
 						currentStreamingMessageId = Date.now().toString();
 						addMessage(parsedContent, 'claude');
 					}
-					}
-					updateStatusWithTotals();
+				}
+				updateStatusWithTotals();
 					break;
 					
 				case 'userInput':
-ttttt// Reset streaming for new user message
-tttttcurrentStreamingMessageId = null;
+					// Reset streaming for new user message
+					currentStreamingMessageId = null;
 					if (message.data.trim()) {
 						addMessage(parseSimpleMarkdown(message.data), 'user');
 					}

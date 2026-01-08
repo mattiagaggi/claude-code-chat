@@ -1089,6 +1089,11 @@ class ClaudeChatProvider {
 					});
 				}
 				break;
+
+			default:
+				// Log unhandled message types for debugging
+				console.error('Unhandled message type:', jsonData.type, jsonData);
+				break;
 		}
 	}
 

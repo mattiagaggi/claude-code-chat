@@ -148,27 +148,37 @@ function renderPermissions(permissions) {
 		return;
 	}
 
-	permissions.forEach((permission, index) => {
+	permissions.forEach((permission) => {
 		const permissionItem = document.createElement('div');
 		permissionItem.className = 'permission-item';
 
-		const displayText = permission.command ?
-			permission.tool + ': ' + permission.command :
-			permission.tool;
+		// Handle both formats: old (tool/command) and new (toolName/pattern)
+		const toolName = permission.toolName || permission.tool;
+		const pattern = permission.pattern || permission.command;
 
-		permissionItem.innerHTML = `
-			<div class="permission-text">${displayText}</div>
-			<button class="btn outlined small danger" onclick="removePermission(${index})">Remove</button>
-		`;
+		const displayText = pattern ?
+			`${toolName}: ${pattern}` :
+			toolName;
 
+		// Create elements manually to avoid escaping issues
+		const textDiv = document.createElement('div');
+		textDiv.className = 'permission-text';
+		textDiv.textContent = displayText;
+
+		const removeBtn = document.createElement('button');
+		removeBtn.className = 'btn outlined small danger';
+		removeBtn.textContent = 'Remove';
+		removeBtn.onclick = () => {
+			vscode.postMessage({
+				type: 'removePermission',
+				toolName: toolName,
+				command: pattern || null
+			});
+		};
+
+		permissionItem.appendChild(textDiv);
+		permissionItem.appendChild(removeBtn);
 		permissionsList.appendChild(permissionItem);
-	});
-}
-
-function removePermission(index) {
-	vscode.postMessage({
-		type: 'removePermission',
-		index: index
 	});
 }
 
@@ -197,17 +207,17 @@ function toggleCommandInput() {
 }
 
 function addPermission() {
-	const tool = document.getElementById('permissionTool').value;
+	const toolName = document.getElementById('permissionTool').value;
 	const command = document.getElementById('permissionCommand').value.trim();
 
-	const permission = { tool: tool };
-	if (tool === 'Bash' && command) {
-		permission.command = command;
+	if (!toolName) {
+		return; // Tool must be selected
 	}
 
 	vscode.postMessage({
 		type: 'addPermission',
-		permission: permission
+		toolName: toolName,
+		command: command || null
 	});
 
 	hideAddPermissionForm();

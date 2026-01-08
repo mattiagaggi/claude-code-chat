@@ -289,7 +289,8 @@ class ClaudeChatProvider {
 			onDeleteCustomSnippet: (snippetId: string) => this.deleteCustomSnippet(snippetId),
 			onGetActiveConversations: () => this.sendActiveConversations(),
 			onSwitchConversation: (conversationId: string) => this.switchConversation(conversationId),
-			onCloseConversation: (conversationId: string) => this.closeConversation(conversationId)
+			onCloseConversation: (conversationId: string) => this.closeConversation(conversationId),
+			onOpenConversationInNewPanel: (filename: string) => this.openConversationInNewPanel(filename)
 		};
 	}
 
@@ -430,15 +431,15 @@ class ClaudeChatProvider {
 			console.log('[Extension] Added --dangerously-skip-permissions flag');
 		} else {
 			// Set permission mode based on plan mode
-			// 'default' mode should prompt for permissions via control_request
+			// 'delegate' mode delegates permission decisions to parent process via control_request
 			console.log('[Extension] YOLO mode disabled - setting permission mode');
 			if (planMode) {
 				args.push('--permission-mode', 'plan');
 				console.log('[Extension] Using permission mode: plan');
 			} else {
-				// Try 'default' mode which should send control_request messages
-				args.push('--permission-mode', 'default');
-				console.log('[Extension] Using permission mode: default');
+				// Use 'delegate' mode which sends control_request messages for permission decisions
+				args.push('--permission-mode', 'delegate');
+				console.log('[Extension] Using permission mode: delegate');
 			}
 		}
 
@@ -892,7 +893,20 @@ class ClaudeChatProvider {
 	}
 
 	private async addPermission(toolName: string, command: string | null) {
-		// Implementation
+		// Create input object based on tool type
+		const input: Record<string, unknown> = {};
+
+		if (toolName === 'Bash' && command) {
+			input.command = command;
+		} else if ((toolName === 'Read' || toolName === 'Write' || toolName === 'Edit') && command) {
+			input.file_path = command;
+		}
+
+		// Add to permission manager
+		await this.permissionManager.addAlwaysAllowPermission(toolName, input);
+
+		// Send updated permissions back to UI
+		await this.sendPermissions();
 	}
 
 	private async loadMCPServers() {
@@ -1238,6 +1252,30 @@ class ClaudeChatProvider {
 		// Remove from active conversations (implementation depends on how you want to manage this)
 		// For now, we'll just notify the UI
 		this.sendActiveConversations();
+	}
+
+	/**
+	 * Open conversation in a new panel
+	 */
+	private async openConversationInNewPanel(filename: string) {
+		// Find an available provider (check if any provider has empty/no active conversation)
+		// For now, we'll use a simple approach: open in column 2 if available, else column 3
+		// This requires access to the global providers array which we'll need to pass in
+
+		// As a workaround, we'll execute the command to open a new chat panel
+		// and then load the conversation into it
+		try {
+			await vscode.commands.executeCommand('claude-code-chat.openChat2');
+
+			// Give the panel time to initialize
+			await new Promise(resolve => setTimeout(resolve, 100));
+
+			// Load the conversation in the new panel
+			await vscode.commands.executeCommand('claude-code-chat.loadConversation', filename);
+		} catch (error) {
+			console.error('Failed to open conversation in new panel:', error);
+			vscode.window.showErrorMessage('Failed to open conversation in new panel');
+		}
 	}
 
 	async dispose() {

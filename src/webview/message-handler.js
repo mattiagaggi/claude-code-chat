@@ -245,6 +245,10 @@ window.addEventListener('message', event => {
 			addMessage('✅ MCP server deleted successfully', 'system');
 			break;
 
+		case 'permissions':
+			renderPermissions(message.data);
+			break;
+
 		case 'planModeChanged':
 			planModeEnabled = message.data.enabled;
 			const planModeSwitch = document.getElementById('planModeSwitch');

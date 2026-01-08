@@ -397,8 +397,8 @@ export class ConversationManager {
 			const conversationId = this._generateConversationId();
 			this._conversations.set(conversationId, {
 				messages: conversationData.messages,
-				startTime: conversationData.startTime,
-				sessionId: conversationData.sessionId || undefined,
+				startTime: conversationData.startTime || new Date().toISOString(),
+				sessionId: conversationData.sessionId ? conversationData.sessionId : undefined,
 				totalCost: conversationData.totalCost,
 				totalTokensInput: conversationData.totalTokens.input,
 				totalTokensOutput: conversationData.totalTokens.output,

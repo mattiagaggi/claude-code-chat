@@ -1,0 +1,38 @@
+/**
+ * Extension Test Suite
+ * Main test file that serves as an entry point for all tests
+ */
+
+import * as assert from 'assert';
+import * as vscode from 'vscode';
+
+suite('Extension Test Suite', () => {
+	vscode.window.showInformationMessage('Start all tests.');
+
+	test('Extension should be present', () => {
+		assert.ok(vscode.extensions.getExtension('AndrePimenta.claude-code-chat'));
+	});
+
+	test('Extension should activate', async () => {
+		const ext = vscode.extensions.getExtension('AndrePimenta.claude-code-chat');
+		if (ext) {
+			await ext.activate();
+			assert.strictEqual(ext.isActive, true);
+		}
+	});
+
+	test('Commands should be registered', async () => {
+		const commands = await vscode.commands.getCommands(true);
+
+		const expectedCommands = [
+			'claude-code-chat.openChat',
+			'claude-code-chat.openChat1',
+			'claude-code-chat.openChat2',
+			'claude-code-chat.openChat3'
+		];
+
+		expectedCommands.forEach(cmd => {
+			assert.ok(commands.includes(cmd), `Command ${cmd} should be registered`);
+		});
+	});
+});

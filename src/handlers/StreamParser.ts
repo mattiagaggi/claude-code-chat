@@ -117,6 +117,17 @@ export class StreamParser {
 					}
 				}
 			}
+			// Extract usage from assistant message
+			if (data.message?.usage) {
+				const usage = data.message.usage;
+				console.log('[StreamParser] Assistant message usage:', usage);
+				if (usage.input_tokens || usage.output_tokens) {
+					this.callbacks.onTokenUsage?.(
+						usage.input_tokens || 0,
+						usage.output_tokens || 0
+					);
+				}
+			}
 		} else if (data.type === 'message') {
 			// Full message received
 			if (this.currentMessageContent) {
@@ -133,13 +144,12 @@ export class StreamParser {
 				this.callbacks.onMessage?.(data.result);
 			}
 
-			// Extract usage info
-			if (data.input_tokens && data.output_tokens) {
-				console.log('[StreamParser] Tokens found:', data.input_tokens, data.output_tokens);
-				this.callbacks.onTokenUsage?.(
-					data.input_tokens,
-					data.output_tokens
-				);
+			// Extract usage info - can be at top level or in usage object
+			const inputTokens = data.input_tokens || data.usage?.input_tokens || 0;
+			const outputTokens = data.output_tokens || data.usage?.output_tokens || 0;
+			if (inputTokens || outputTokens) {
+				console.log('[StreamParser] Tokens found:', inputTokens, outputTokens);
+				this.callbacks.onTokenUsage?.(inputTokens, outputTokens);
 			} else {
 				console.log('[StreamParser] No tokens in result data. Keys:', Object.keys(data));
 			}

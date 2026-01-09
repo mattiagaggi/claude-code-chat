@@ -5,19 +5,28 @@
 
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
-import * as path from 'path';
 import getHtml from './ui';
 import { ProcessManager, ConversationManager, PermissionManager } from './managers';
-import { WebviewMessageHandler, StreamParser } from './handlers';
-
-// Diff content storage for read-only diff views
-const diffContentStore = new Map<string, string>();
-
-class DiffContentProvider implements vscode.TextDocumentContentProvider {
-	provideTextDocumentContent(uri: vscode.Uri): string {
-		return diffContentStore.get(uri.path) || '';
-	}
-}
+import {
+	WebviewMessageHandler,
+	StreamParser,
+	MCPHandler,
+	ConversationHandler,
+	PermissionRequestHandler,
+	createStreamCallbacks,
+	DiffContentProvider,
+	openDiff as utilOpenDiff,
+	openFile as utilOpenFile,
+	selectImage as utilSelectImage,
+	selectImageFile as utilSelectImageFile,
+	createImageFile as utilCreateImageFile,
+	openTerminal,
+	getClipboardText as utilGetClipboardText,
+	getSettings as utilGetSettings,
+	updateSettings as utilUpdateSettings,
+	enableYoloMode as utilEnableYoloMode,
+	getPlatformInfo
+} from './handlers';
 
 export function activate(context: vscode.ExtensionContext) {
 	// Create multiple providers for multi-chat support
@@ -114,12 +123,14 @@ class ClaudeChatProvider {
 	private permissionManager: PermissionManager;
 	private messageHandler: WebviewMessageHandler;
 	private streamParser: StreamParser;
+	private mcpHandler: MCPHandler;
+	private conversationHandler: ConversationHandler;
+	private permissionRequestHandler: PermissionRequestHandler;
 
 	// State
 	private currentProcess: cp.ChildProcess | undefined;
 	private isProcessing = false;
 	private selectedModel = 'default';
-	private pendingPermissions = new Map<string, any>();
 	private chatNumber: number;
 
 	// Conversation state
@@ -143,8 +154,43 @@ class ClaudeChatProvider {
 		this.permissionManager = new PermissionManager(context);
 
 		// Initialize handlers
+		this.mcpHandler = new MCPHandler();
+		this.permissionRequestHandler = new PermissionRequestHandler({
+			permissionManager: this.permissionManager,
+			processManager: this.processManager,
+			postMessage: (msg) => this.postMessage(msg)
+		});
 		this.messageHandler = new WebviewMessageHandler(context, this.createMessageCallbacks());
-		this.streamParser = new StreamParser(this.createStreamCallbacks());
+
+		// Initialize conversation handler
+		this.conversationHandler = new ConversationHandler({
+			conversationManager: this.conversationManager,
+			processManager: this.processManager,
+			postMessage: (msg) => this.postMessage(msg),
+			getCurrentConversationId: () => this.currentConversationId,
+			setCurrentConversationId: (id) => { this.currentConversationId = id; },
+			getProcessingConversationId: () => this.processingConversationId,
+			isProcessing: () => this.isProcessing,
+			getStreamingText: (id) => this.conversationStreamingText.get(id)
+		});
+
+		// Initialize stream parser with factory
+		this.streamParser = new StreamParser(createStreamCallbacks({
+			conversationManager: this.conversationManager,
+			context: this.context,
+			postMessage: (msg) => this.postMessage(msg),
+			getProcessingConversationId: () => this.processingConversationId,
+			setProcessingState: (isProcessing) => {
+				this.isProcessing = isProcessing;
+				if (!isProcessing) {
+					this.processingConversationId = undefined;
+				}
+			},
+			getStreamingText: (id) => this.conversationStreamingText.get(id),
+			setStreamingText: (id, text) => this.conversationStreamingText.set(id, text),
+			deleteStreamingText: (id) => this.conversationStreamingText.delete(id),
+			onControlRequest: (request) => this.handleControlRequest(request)
+		}));
 
 		// Load saved state
 		this.selectedModel = context.workspaceState.get('claude.selectedModel', 'default');
@@ -312,184 +358,6 @@ class ClaudeChatProvider {
 			onSwitchConversation: (conversationId: string) => this.switchConversation(conversationId),
 			onCloseConversation: (conversationId: string) => this.closeConversation(conversationId),
 			onOpenConversationInNewPanel: (filename: string) => this.openConversationInNewPanel(filename)
-		};
-	}
-
-	/**
-	 * Create stream parser callbacks
-	 *
-	 * Architecture: Backend operates independently - always saves messages and sends to UI with conversationId.
-	 * The webview decides what to display based on which conversation is currently being viewed.
-	 */
-	private createStreamCallbacks() {
-		return {
-			onSessionStart: (sessionId: string) => {
-				this.conversationManager.setSessionId(sessionId, this.processingConversationId);
-			},
-			onToolUse: (data: any) => {
-				// Always save to conversation
-				this.conversationManager.addMessage('toolUse', data, this.processingConversationId);
-				// Always send to UI with conversationId - UI will filter
-				this.postMessage({
-					type: 'toolUse',
-					data,
-					conversationId: this.processingConversationId
-				});
-			},
-			onToolResult: (data: any) => {
-				// Always save to conversation
-				this.conversationManager.addMessage('toolResult', data, this.processingConversationId);
-				// Always send to UI with conversationId - UI will filter
-				this.postMessage({
-					type: 'toolResult',
-					data,
-					conversationId: this.processingConversationId
-				});
-			},
-			onTextDelta: (text: string) => {
-				// Accumulate streaming text for the processing conversation
-				const convId = this.processingConversationId || '';
-				const currentText = this.conversationStreamingText.get(convId) || '';
-				this.conversationStreamingText.set(convId, currentText + text);
-
-				// Always send to UI with conversationId - UI will filter
-				this.postMessage({
-					type: 'textDelta',
-					data: text,
-					conversationId: this.processingConversationId
-				});
-			},
-			onMessage: (content: string) => {
-				// Clear streaming text for this conversation - message is complete
-				const convId = this.processingConversationId || '';
-				this.conversationStreamingText.delete(convId);
-
-				// Always save to conversation
-				this.conversationManager.addMessage('assistantMessage', content, this.processingConversationId);
-				// Always send to UI with conversationId - UI will filter
-				this.postMessage({
-					type: 'finalizeStreaming',
-					data: content,
-					conversationId: this.processingConversationId
-				});
-			},
-			onTokenUsage: (inputTokens: number, outputTokens: number) => {
-				this.conversationManager.updateUsage(0, inputTokens, outputTokens, this.processingConversationId);
-
-				// Always send usage to UI with conversationId - UI will filter
-				const conversation = this.processingConversationId
-					? this.conversationManager.getConversation(this.processingConversationId)
-					: null;
-				this.postMessage({
-					type: 'usage',
-					data: {
-						inputTokens: conversation?.totalTokensInput || 0,
-						outputTokens: conversation?.totalTokensOutput || 0,
-						totalCost: conversation?.totalCost || 0
-					},
-					conversationId: this.processingConversationId
-				});
-			},
-			onCostUpdate: (cost: number) => {
-				this.conversationManager.updateUsage(cost, 0, 0, this.processingConversationId);
-
-				// Always send cost to UI with conversationId - UI will filter
-				const conversation = this.processingConversationId
-					? this.conversationManager.getConversation(this.processingConversationId)
-					: null;
-				this.postMessage({
-					type: 'usage',
-					data: {
-						inputTokens: conversation?.totalTokensInput || 0,
-						outputTokens: conversation?.totalTokensOutput || 0,
-						totalCost: conversation?.totalCost || 0
-					},
-					conversationId: this.processingConversationId
-				});
-			},
-			onResult: async (data: any) => {
-				const processingConvId = this.processingConversationId;
-
-				// Always send result to UI with conversationId - UI will filter
-				this.postMessage({
-					type: 'result',
-					data,
-					conversationId: processingConvId
-				});
-				this.postMessage({
-					type: 'clearLoading',
-					conversationId: processingConvId
-				});
-
-				// Set processing to false when we get a final result (success or error)
-				if (data.subtype === 'success' || data.subtype?.startsWith('error')) {
-					this.postMessage({
-						type: 'setProcessing',
-						data: { isProcessing: false },
-						conversationId: processingConvId
-					});
-					this.isProcessing = false;
-					this.processingConversationId = undefined;
-				}
-
-				// Extract and send usage info from result
-				// Usage can be at top level or in nested usage object
-				const usage = data.usage || {};
-				const inputTokens = data.input_tokens || usage.input_tokens || 0;
-				const outputTokens = data.output_tokens || usage.output_tokens || 0;
-				const cacheReadTokens = usage.cache_read_input_tokens || 0;
-				const cost = data.total_cost_usd || 0;
-
-				console.log('[Extension] Result usage data:', { inputTokens, outputTokens, cacheReadTokens, cost });
-
-				if (inputTokens || outputTokens || cost) {
-					// Update conversation manager for the processing conversation
-					this.conversationManager.updateUsage(cost, inputTokens, outputTokens, processingConvId);
-
-					// Always send to UI with conversationId - UI will filter
-					const conversation = processingConvId
-						? this.conversationManager.getConversation(processingConvId)
-						: null;
-					console.log('[Extension] Sending usage to UI:', conversation);
-					this.postMessage({
-						type: 'usage',
-						data: {
-							inputTokens: conversation?.totalTokensInput || 0,
-							outputTokens: conversation?.totalTokensOutput || 0,
-							totalCost: conversation?.totalCost || 0
-						},
-						conversationId: processingConvId
-					});
-				}
-
-				// Auto-save the processing conversation after each response
-				await this.conversationManager.saveConversation(processingConvId);
-
-				// Refresh conversation list to update timestamps
-				const conversations = this.conversationManager.getConversationList();
-				this.postMessage({ type: 'conversationList', data: conversations });
-			},
-			onError: (error: string) => {
-				// Always save to conversation
-				this.conversationManager.addMessage('error', error, this.processingConversationId);
-				// Always send to UI with conversationId - UI will filter
-				this.postMessage({
-					type: 'error',
-					data: error,
-					conversationId: this.processingConversationId
-				});
-			},
-			onAccountInfo: (info: any) => {
-				if (info.subscription_type) {
-					this.context.globalState.update('claude.subscriptionType', info.subscription_type);
-				}
-			},
-			onControlRequest: (request: any) => {
-				this.handleControlRequest(request);
-			},
-			onControlResponse: (response: any) => {
-				// Handle control responses if needed
-			}
 		};
 	}
 
@@ -681,187 +549,21 @@ class ClaudeChatProvider {
 	 * Handle control request (permission prompt)
 	 */
 	private async handleControlRequest(requestData: any) {
-		const request_id = requestData.request_id;
-		const tool_name = requestData.request?.tool_name || requestData.tool_name;
-		const input = requestData.request?.input || requestData.input;
-
-		console.log('[Extension] ⚠️ PERMISSION REQUEST RECEIVED ⚠️');
-		console.log('[Extension] Control request RAW:', JSON.stringify(requestData, null, 2));
-		console.log('[Extension] Control request:', { request_id, tool_name, input });
-
-		// Handle AskUserQuestion specially - it's not a permission request
-		if (tool_name === 'AskUserQuestion') {
-			this.handleUserQuestion(request_id, input);
-			return;
-		}
-
-		// Check if auto-approved
-		if (await this.permissionManager.shouldAutoApprove(tool_name, input)) {
-			this.sendPermissionResponse(request_id, true);
-			return;
-		}
-
-		// Store pending request
-		this.pendingPermissions.set(request_id, requestData);
-
-		// Show UI prompt
-		this.postMessage({
-			type: 'permissionRequest',
-			data: {
-				id: request_id,
-				toolName: tool_name,
-				input,
-				status: 'pending',
-				suggestions: requestData.request?.suggestions || requestData.suggestions
-			}
-		});
-	}
-
-	/**
-	 * Handle AskUserQuestion tool
-	 */
-	private handleUserQuestion(requestId: string, input: any) {
-		// Store pending question
-		this.pendingPermissions.set(requestId, { request_id: requestId, tool_name: 'AskUserQuestion', input });
-
-		// Send to UI
-		this.postMessage({
-			type: 'userQuestion',
-			data: {
-				id: requestId,
-				questions: input.questions || []
-			}
-		});
+		await this.permissionRequestHandler.handleControlRequest(requestData);
 	}
 
 	/**
 	 * Handle permission response from UI
 	 */
 	private handlePermissionResponse(id: string, approved: boolean, alwaysAllow?: boolean) {
-		const request = this.pendingPermissions.get(id);
-		if (!request) return;
-
-		const tool_name = request.request?.tool_name || request.tool_name;
-		const input = request.request?.input || request.input;
-		const tool_use_id = request.request?.tool_use_id || request.tool_use_id;
-
-		if (approved && alwaysAllow) {
-			this.permissionManager.addAlwaysAllowPermission(tool_name, input);
-		}
-
-		this.sendPermissionResponse(id, approved, input, tool_use_id, alwaysAllow ? tool_name : undefined);
-		this.pendingPermissions.delete(id);
+		this.permissionRequestHandler.handlePermissionResponse(id, approved, alwaysAllow);
 	}
 
 	/**
 	 * Handle user question response from UI
 	 */
 	private handleUserQuestionResponse(id: string, answers: Record<string, string>) {
-		const request = this.pendingPermissions.get(id);
-		if (!request) return;
-
-		// Send answer back to Claude
-		const response = {
-			type: 'control_response',
-			request_id: id,
-			response: { answers }
-		};
-
-		console.log('[Extension] Sending user question response:', response);
-		const writeResult = this.processManager.write(JSON.stringify(response) + '\n');
-		console.log('[Extension] Write result:', writeResult);
-
-		this.pendingPermissions.delete(id);
-	}
-
-	/**
-	 * Send permission response to Claude
-	 */
-	private sendPermissionResponse(requestId: string, approved: boolean, input?: any, toolUseId?: string, alwaysAllowTool?: string) {
-		console.log('[Extension] ========== SENDING PERMISSION RESPONSE ==========');
-		console.log('[Extension] Request ID:', requestId);
-		console.log('[Extension] Approved:', approved);
-		console.log('[Extension] Tool Use ID:', toolUseId);
-
-		let response: any;
-		if (approved) {
-			response = {
-				type: 'control_response',
-				response: {
-					subtype: 'success',
-					request_id: requestId,
-					response: {
-						behavior: 'allow',
-						updatedInput: input,
-						toolUseID: toolUseId
-					}
-				}
-			};
-			// Add updatedPermissions if always allow was selected
-			if (alwaysAllowTool) {
-				// Format according to Claude SDK PermissionUpdate type
-				response.response.response.updatedPermissions = [{
-					type: 'addRules',
-					rules: [{ toolName: alwaysAllowTool }],
-					behavior: 'allow',
-					destination: 'session'
-				}];
-			}
-		} else {
-			response = {
-				type: 'control_response',
-				response: {
-					subtype: 'success',
-					request_id: requestId,
-					response: {
-						behavior: 'deny',
-						message: 'User denied permission',
-						interrupt: true,
-						toolUseID: toolUseId
-					}
-				}
-			};
-		}
-
-		console.log('[Extension] Response object:', JSON.stringify(response, null, 2));
-		const responseStr = JSON.stringify(response) + '\n';
-		console.log('[Extension] Response string:', responseStr);
-		console.log('[Extension] Response bytes:', Buffer.from(responseStr).length);
-
-		// Check stdin state before write
-		console.log('[Extension] Process running before write:', this.processManager.isRunning());
-
-		const writeResult = this.processManager.write(responseStr);
-		console.log('[Extension] Write result:', writeResult);
-
-		// Verify the process is still running
-		if (this.processManager.isRunning()) {
-			console.log('[Extension] Process is still running after write ✓');
-		} else {
-			console.error('[Extension] Process died after write! ✗');
-		}
-
-		this.postMessage({ type: 'updatePermissionStatus', data: { id: requestId, status: approved ? 'approved' : 'denied' } });
-
-		// Monitor for response
-		console.log('[Extension] Waiting for Claude response...');
-		let checkCount = 0;
-		const checkInterval = setInterval(() => {
-			checkCount++;
-			console.log(`[Extension] Check ${checkCount}/5: isProcessing=${this.isProcessing}, processRunning=${this.processManager.isRunning()}`);
-			if (checkCount >= 5) {
-				clearInterval(checkInterval);
-			}
-		}, 2000);
-
-		// Set a timeout to detect if Claude isn't responding
-		setTimeout(() => {
-			clearInterval(checkInterval);
-			if (this.isProcessing && this.processManager.isRunning()) {
-				console.warn('[Extension] Claude has not responded 10 seconds after permission approval');
-				console.warn('[Extension] This might indicate the process is stuck');
-			}
-		}, 10000);
+		this.permissionRequestHandler.handleUserQuestionResponse(id, answers);
 	}
 
 	/**
@@ -889,7 +591,7 @@ class ClaudeChatProvider {
 		}
 		this.processingConversationId = undefined;
 		this.permissionManager.cancelAllPending();
-		this.pendingPermissions.clear();
+		this.permissionRequestHandler.clearPending();
 	}
 
 	/**
@@ -928,95 +630,10 @@ class ClaudeChatProvider {
 	 * Load conversation (from history)
 	 */
 	async loadConversation(filename: string) {
-		console.log('[Extension] loadConversation called with filename:', filename);
-
-		// DON'T stop the running process - let it continue in background
-		// Just save current conversation before switching view
-		await this.conversationManager.saveConversation();
-
-		// Check if we're trying to load the currently processing conversation
-		// In that case, use the in-memory state instead of loading from file
-		if (this.isProcessing && this.processingConversationId) {
-			const processingConv = this.conversationManager.getConversation(this.processingConversationId);
-			if (processingConv && processingConv.filename === filename) {
-				console.log('[Extension] Loading currently processing conversation from memory');
-
-				// Switch to this conversation (don't load from file)
-				this.conversationManager.switchConversation(this.processingConversationId);
-				this.currentConversationId = this.processingConversationId;
-
-				// Get streaming text for this conversation (if any)
-				const streamingText = this.conversationStreamingText.get(this.processingConversationId);
-
-				// Send the in-memory conversation data to webview (including streaming text)
-				this.postMessage({
-					type: 'conversationLoaded',
-					data: {
-						conversationId: this.processingConversationId,
-						messages: processingConv.messages,
-						sessionId: processingConv.sessionId,
-						startTime: processingConv.startTime,
-						totalCost: processingConv.totalCost,
-						totalTokens: {
-							input: processingConv.totalTokensInput,
-							output: processingConv.totalTokensOutput
-						},
-						streamingText: streamingText || null
-					}
-				});
-				this.postMessage({
-					type: 'setProcessing',
-					data: { isProcessing: true, requestStartTime: Date.now() },
-					conversationId: this.processingConversationId
-				});
-
-				// Refresh conversation history
-				const conversations = this.conversationManager.getConversationList();
-				this.postMessage({ type: 'conversationList', data: conversations });
-				return;
-			}
-		}
-
-		// Load the conversation from file
-		const conversation = await this.conversationManager.loadConversation(filename);
-		console.log('[Extension] Conversation loaded:', conversation ? 'success' : 'failed');
-
-		if (conversation) {
-			// Update current conversation ID
-			this.currentConversationId = this.conversationManager.getActiveConversationId();
-
-			console.log('[Extension] Sending conversationLoaded message with', conversation.messages?.length || 0, 'messages');
-			// Send conversation data to webview with conversationId included
-			this.postMessage({
-				type: 'conversationLoaded',
-				data: {
-					...conversation,
-					conversationId: this.currentConversationId
-				}
-			});
-
-			// This is a non-processing conversation, so clear processing state in UI
-			this.postMessage({ type: 'setProcessing', data: { isProcessing: false } });
-
-			// Update session info
-			const session = this.conversationManager.getCurrentSession();
-			this.postMessage({
-				type: 'sessionInfo',
-				data: {
-					sessionId: session.sessionId,
-					totalTokensInput: session.totalTokensInput,
-					totalTokensOutput: session.totalTokensOutput,
-					totalCost: session.totalCost,
-					requestCount: session.messageCount
-				}
-			});
-
-			// Refresh conversation history
-			const conversations = this.conversationManager.getConversationList();
-			this.postMessage({ type: 'conversationList', data: conversations });
-		} else {
-			console.error('[Extension] Failed to load conversation, conversation is null/undefined');
-		}
+		await this.conversationHandler.loadConversation(filename, {
+			isProcessing: this.isProcessing,
+			processingConversationId: this.processingConversationId
+		});
 	}
 
 	/**
@@ -1047,6 +664,28 @@ class ClaudeChatProvider {
 		this.sendConversationList();
 		this.sendSettings();
 		this.sendPlatformInfo();
+		this.sendCurrentUsage();
+	}
+
+	/**
+	 * Send current conversation's usage stats to webview
+	 */
+	private sendCurrentUsage() {
+		const conversation = this.currentConversationId
+			? this.conversationManager.getConversation(this.currentConversationId)
+			: null;
+
+		if (conversation) {
+			this.postMessage({
+				type: 'usage',
+				data: {
+					inputTokens: conversation.totalTokensInput || 0,
+					outputTokens: conversation.totalTokensOutput || 0,
+					totalCost: conversation.totalCost || 0
+				},
+				conversationId: this.currentConversationId
+			});
+		}
 	}
 
 	/**
@@ -1077,29 +716,16 @@ class ClaudeChatProvider {
 	}
 
 	private sendSettings() {
-		const config = vscode.workspace.getConfiguration('claudeCodeChat');
-		this.postMessage({
-			type: 'settings',
-			data: {
-				'thinking.intensity': config.get('thinking.intensity', 'think'),
-				'wsl.enabled': config.get('wsl.enabled', false),
-				'wsl.distro': config.get('wsl.distro', 'Ubuntu'),
-				'permissions.yoloMode': config.get('permissions.yoloMode', false)
-			}
-		});
+		this.postMessage({ type: 'settings', data: utilGetSettings() });
 	}
 
 	private updateSettings(settings: any) {
-		const config = vscode.workspace.getConfiguration('claudeCodeChat');
-		for (const [key, value] of Object.entries(settings)) {
-			config.update(key, value, vscode.ConfigurationTarget.Global);
-		}
+		utilUpdateSettings(settings);
 	}
 
-	private getClipboardText() {
-		vscode.env.clipboard.readText().then(text => {
-			this.postMessage({ type: 'clipboardText', data: text });
-		});
+	private async getClipboardText() {
+		const text = await utilGetClipboardText();
+		this.postMessage({ type: 'clipboardText', data: text });
 	}
 
 	private async sendPermissions() {
@@ -1113,8 +739,7 @@ class ClaudeChatProvider {
 	}
 
 	private enableYoloMode() {
-		const config = vscode.workspace.getConfiguration('claudeCodeChat');
-		config.update('permissions.yoloMode', true, vscode.ConfigurationTarget.Global);
+		utilEnableYoloMode();
 	}
 
 	private async addPermission(toolName: string, command: string | null) {
@@ -1135,75 +760,21 @@ class ClaudeChatProvider {
 	}
 
 	private async loadMCPServers() {
-		const mcpConfigPath = this.getMCPConfigPath();
-		if (!mcpConfigPath) {
-			this.postMessage({ type: 'mcpServersLoaded', servers: {} });
-			return;
-		}
-
-		try {
-			const fs = require('fs').promises;
-			const data = await fs.readFile(mcpConfigPath, 'utf8');
-			const config = JSON.parse(data);
-			this.postMessage({ type: 'mcpServersLoaded', servers: config.mcpServers || {} });
-		} catch (error: any) {
-			console.error('Failed to load MCP servers:', error.message);
-			this.postMessage({ type: 'mcpServersLoaded', servers: {} });
-		}
+		const servers = await this.mcpHandler.loadServers();
+		this.postMessage({ type: 'mcpServersLoaded', servers });
 	}
 
 	private async saveMCPServer(name: string, config: any) {
-		const mcpConfigPath = this.getMCPConfigPath();
-		if (!mcpConfigPath) {
-			return;
-		}
-
-		try {
-			const fs = require('fs').promises;
-			let mcpConfig: any = { mcpServers: {} };
-
-			// Load existing config
-			try {
-				const data = await fs.readFile(mcpConfigPath, 'utf8');
-				mcpConfig = JSON.parse(data);
-				if (!mcpConfig.mcpServers) {
-					mcpConfig.mcpServers = {};
-				}
-			} catch {
-				// File doesn't exist yet
-			}
-
-			// Add/update server
-			mcpConfig.mcpServers[name] = config;
-
-			// Save config
-			await fs.writeFile(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-
-			// Reload servers in UI
+		const success = await this.mcpHandler.saveServer(name, config);
+		if (success) {
 			this.loadMCPServers();
-		} catch (error: any) {
-			console.error('Failed to save MCP server:', error.message);
 		}
 	}
 
 	private async deleteMCPServer(name: string) {
-		const mcpConfigPath = this.getMCPConfigPath();
-		if (!mcpConfigPath) {
-			return;
-		}
-
-		try {
-			const fs = require('fs').promises;
-			const data = await fs.readFile(mcpConfigPath, 'utf8');
-			const mcpConfig = JSON.parse(data);
-
-			if (mcpConfig.mcpServers && mcpConfig.mcpServers[name]) {
-				delete mcpConfig.mcpServers[name];
-				await fs.writeFile(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-				this.loadMCPServers();
-			}
-		} catch (error: any) {
-			console.error('Failed to delete MCP server:', error.message);
+		const success = await this.mcpHandler.deleteServer(name);
+		if (success) {
+			this.loadMCPServers();
 		}
 	}
 
@@ -1221,21 +792,15 @@ class ClaudeChatProvider {
 	}
 
 	private openModelTerminal() {
-		const terminal = vscode.window.createTerminal('Claude Model');
-		terminal.show();
-		terminal.sendText('claude --help');
+		openTerminal('Claude Model', 'claude --help');
 	}
 
 	private openUsageTerminal(usageType: string) {
-		const terminal = vscode.window.createTerminal('Claude Usage');
-		terminal.show();
-		terminal.sendText(`claude usage ${usageType}`);
+		openTerminal('Claude Usage', `claude usage ${usageType}`);
 	}
 
 	private runInstallCommand() {
-		const terminal = vscode.window.createTerminal('Install Claude');
-		terminal.show();
-		terminal.sendText('npm install -g @anthropic/claude');
+		openTerminal('Install Claude', 'npm install -g @anthropic/claude');
 	}
 
 	private executeSlashCommand(command: string) {
@@ -1244,29 +809,17 @@ class ClaudeChatProvider {
 	}
 
 	private openDiff(filePath: string, oldContent: string, newContent: string) {
-		const fileName = path.basename(filePath);
-		diffContentStore.set(`${filePath}?old`, oldContent);
-		diffContentStore.set(`${filePath}?new`, newContent);
-
-		const leftUri = vscode.Uri.parse(`claude-diff:${filePath}?old`);
-		const rightUri = vscode.Uri.parse(`claude-diff:${filePath}?new`);
-
-		vscode.commands.executeCommand('vscode.diff', leftUri, rightUri, `${fileName} (Claude's changes)`);
+		utilOpenDiff(filePath, oldContent, newContent);
 	}
 
 	private openFile(filePath: string) {
-		vscode.window.showTextDocument(vscode.Uri.file(filePath));
+		utilOpenFile(filePath);
 	}
 
 	private async selectImage() {
-		const result = await vscode.window.showOpenDialog({
-			canSelectFiles: true,
-			canSelectMany: false,
-			filters: { 'Images': ['png', 'jpg', 'jpeg', 'gif', 'webp'] }
-		});
-
-		if (result?.[0]) {
-			this.postMessage({ type: 'imageSelected', data: result[0].fsPath });
+		const filePath = await utilSelectImage();
+		if (filePath) {
+			this.postMessage({ type: 'imageSelected', data: filePath });
 		}
 	}
 
@@ -1283,215 +836,45 @@ class ClaudeChatProvider {
 	}
 
 	private createImageFile(imageData: string, imageType: string) {
-		// Create image file from base64 data
-		const fs = require('fs');
-		const os = require('os');
-
-		// Extract base64 data (remove data:image/png;base64, prefix if present)
-		const base64Match = imageData.match(/^data:image\/\w+;base64,(.+)$/);
-		const base64String = base64Match ? base64Match[1] : imageData;
-
-		// Determine file extension from MIME type
-		const ext = imageType.replace('image/', '').replace('jpeg', 'jpg');
-		const fileName = `image-${Date.now()}.${ext}`;
-
-		// Create temp file
-		const tempDir = os.tmpdir();
-		const filePath = path.join(tempDir, fileName);
-
-		// Write the file
-		const buffer = Buffer.from(base64String, 'base64');
-		fs.writeFileSync(filePath, buffer);
-
-		// Send the path back to webview
-		this.postMessage({
-			type: 'imagePath',
-			path: filePath
-		});
-
-		// Show feedback
-		console.log(`[Extension] Created image file: ${filePath}`);
+		const filePath = utilCreateImageFile(imageData, imageType);
+		this.postMessage({ type: 'imagePath', path: filePath });
 	}
 
 	private async selectImageFile() {
-		const result = await vscode.window.showOpenDialog({
-			canSelectFiles: true,
-			canSelectFolders: false,
-			canSelectMany: false,
-			filters: {
-				'Images': ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']
-			},
-			title: 'Select an image to attach'
-		});
-
-		if (result && result[0]) {
-			const filePath = result[0].fsPath;
-
-			// Send the file path back to webview - Claude CLI will read it directly
-			this.postMessage({
-				type: 'imagePath',
-				path: filePath
-			});
-
+		const filePath = await utilSelectImageFile();
+		if (filePath) {
+			this.postMessage({ type: 'imagePath', path: filePath });
 			console.log(`[Extension] Image selected: ${filePath}`);
 		}
 	}
 
 	private sendPlatformInfo() {
-		this.postMessage({
-			type: 'platformInfo',
-			data: { platform: process.platform }
-		});
+		this.postMessage({ type: 'platformInfo', data: getPlatformInfo() });
 	}
 
 	private getMCPConfigPath(): string | undefined {
-		const homeDir = require('os').homedir();
-		const storagePath = path.join(homeDir, '.claude');
-		return path.join(storagePath, 'mcp', 'mcp-servers.json');
+		return this.mcpHandler.getConfigPath();
 	}
 
 	/**
 	 * Send active conversations list to webview
 	 */
 	private sendActiveConversations() {
-		const conversationIds = this.conversationManager.getActiveConversationIds();
-		const activeConversations = conversationIds.map(id => {
-			const conversation = this.conversationManager.getConversation(id);
-			if (!conversation) {
-				return null;
-			}
-
-			// Generate title from first user message
-			const userMessages = conversation.messages.filter((m: any) => m.messageType === 'userInput');
-			const title = userMessages.length > 0
-				? userMessages[0].data.substring(0, 30) + (userMessages[0].data.length > 30 ? '...' : '')
-				: 'New Chat';
-
-			return {
-				id,
-				title,
-				isActive: id === this.currentConversationId,
-				hasNewMessages: conversation.hasNewMessages,
-				newMessageCount: conversation.messages.filter((m: any) =>
-					m.messageType !== 'userInput' && conversation.hasNewMessages
-				).length,
-				isProcessing: this.isProcessing && id === this.processingConversationId
-			};
-		}).filter(c => c !== null);
-
-		this.postMessage({
-			type: 'activeConversationsList',
-			data: activeConversations
-		});
+		this.conversationHandler.sendActiveConversations();
 	}
 
 	/**
 	 * Switch to a different conversation
 	 */
 	private async switchConversation(conversationId: string) {
-		// Don't switch if already active
-		if (conversationId === this.currentConversationId) {
-			return;
-		}
-
-		// Save current conversation
-		await this.conversationManager.saveConversation(this.currentConversationId);
-
-		// Switch conversation in manager
-		const success = this.conversationManager.switchConversation(conversationId);
-		if (!success) {
-			console.error('Failed to switch to conversation:', conversationId);
-			return;
-		}
-
-		// Update current conversation ID
-		this.currentConversationId = conversationId;
-
-		// Load conversation data and send to webview
-		const conversation = this.conversationManager.getConversation(conversationId);
-		if (!conversation) {
-			console.error('Conversation not found after switch:', conversationId);
-			return;
-		}
-
-		// Check if this conversation is currently processing
-		const isProcessingConv = conversationId === this.processingConversationId && this.isProcessing;
-		const streamingText = isProcessingConv ? this.conversationStreamingText.get(conversationId) : null;
-
-		// Send conversation loaded message (include streaming text if processing)
-		this.postMessage({
-			type: 'conversationLoaded',
-			data: {
-				conversationId: conversationId,
-				messages: conversation.messages,
-				sessionId: conversation.sessionId,
-				startTime: conversation.startTime,
-				totalCost: conversation.totalCost,
-				totalTokens: {
-					input: conversation.totalTokensInput,
-					output: conversation.totalTokensOutput
-				},
-				streamingText: streamingText || null
-			}
-		});
-
-		// Update session info
-		const session = this.conversationManager.getCurrentSession();
-		this.postMessage({
-			type: 'sessionInfo',
-			data: {
-				sessionId: session.sessionId,
-				totalTokensInput: session.totalTokensInput,
-				totalTokensOutput: session.totalTokensOutput,
-				totalCost: session.totalCost,
-				requestCount: session.messageCount
-			}
-		});
-
-		// If this conversation is currently processing, set processing state
-		if (isProcessingConv) {
-			this.postMessage({
-				type: 'setProcessing',
-				data: { isProcessing: true, requestStartTime: Date.now() },
-				conversationId: conversationId
-			});
-		}
-
-		// Notify webview of switch
-		this.postMessage({
-			type: 'conversationSwitched',
-			conversationId: conversationId
-		});
+		await this.conversationHandler.switchConversation(conversationId);
 	}
 
 	/**
 	 * Close a conversation
 	 */
 	private async closeConversation(conversationId: string) {
-		// Save before closing
-		await this.conversationManager.saveConversation(conversationId);
-
-		// Terminate any process for this conversation
-		if (this.processManager.isConversationRunning(conversationId)) {
-			await this.processManager.terminateConversation(conversationId);
-		}
-
-		// If closing the active conversation, switch to another or create new
-		if (conversationId === this.currentConversationId) {
-			const otherConversations = this.conversationManager.getActiveConversationIds()
-				.filter(id => id !== conversationId);
-
-			if (otherConversations.length > 0) {
-				await this.switchConversation(otherConversations[0]);
-			} else {
-				// Create a new conversation
-				await this.newSession();
-			}
-		}
-
-		// Remove from active conversations (implementation depends on how you want to manage this)
-		// For now, we'll just notify the UI
-		this.sendActiveConversations();
+		await this.conversationHandler.closeConversation(conversationId, () => this.newSession());
 	}
 
 	/**

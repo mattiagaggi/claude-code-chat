@@ -399,7 +399,7 @@ class ClaudeChatProvider {
 	/**
 	 * Send message to Claude
 	 */
-	private async sendMessageToClaude(message: string, planMode?: boolean, thinkingMode?: boolean) {
+	private async sendMessageToClaude(message: string, _planMode?: boolean, thinkingMode?: boolean) {
 		// Cancel current operation if running
 		if (this.isProcessing) {
 			await this.stopProcess();
@@ -413,7 +413,9 @@ class ClaudeChatProvider {
 		const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : process.cwd();
 
 		// Build args
+		// --print is required for non-interactive mode to properly execute tools
 		const args = [
+			'--print',
 			'--output-format', 'stream-json',
 			'--input-format', 'stream-json',
 			'--verbose'
@@ -430,17 +432,9 @@ class ClaudeChatProvider {
 			args.push('--dangerously-skip-permissions');
 			console.log('[Extension] Added --dangerously-skip-permissions flag');
 		} else {
-			// Set permission mode based on plan mode
-			// 'delegate' mode delegates permission decisions to parent process via control_request
-			console.log('[Extension] YOLO mode disabled - setting permission mode');
-			if (planMode) {
-				args.push('--permission-mode', 'plan');
-				console.log('[Extension] Using permission mode: plan');
-			} else {
-				// Use 'delegate' mode which sends control_request messages for permission decisions
-				args.push('--permission-mode', 'delegate');
-				console.log('[Extension] Using permission mode: delegate');
-			}
+			// Use permission-prompt-tool stdio to handle permissions via stdin/stdout
+			console.log('[Extension] YOLO mode disabled - using permission-prompt-tool stdio');
+			args.push('--permission-prompt-tool', 'stdio');
 		}
 
 		// Add MCP config
@@ -627,12 +621,13 @@ class ClaudeChatProvider {
 
 		const tool_name = request.request?.tool_name || request.tool_name;
 		const input = request.request?.input || request.input;
+		const tool_use_id = request.request?.tool_use_id || request.tool_use_id;
 
 		if (approved && alwaysAllow) {
 			this.permissionManager.addAlwaysAllowPermission(tool_name, input);
 		}
 
-		this.sendPermissionResponse(id, approved);
+		this.sendPermissionResponse(id, approved, input, tool_use_id, alwaysAllow ? tool_name : undefined);
 		this.pendingPermissions.delete(id);
 	}
 
@@ -660,16 +655,45 @@ class ClaudeChatProvider {
 	/**
 	 * Send permission response to Claude
 	 */
-	private sendPermissionResponse(requestId: string, approved: boolean) {
+	private sendPermissionResponse(requestId: string, approved: boolean, input?: any, toolUseId?: string, alwaysAllowTool?: string) {
 		console.log('[Extension] ========== SENDING PERMISSION RESPONSE ==========');
 		console.log('[Extension] Request ID:', requestId);
 		console.log('[Extension] Approved:', approved);
+		console.log('[Extension] Tool Use ID:', toolUseId);
 
-		const response = {
-			type: 'control_response',
-			request_id: requestId,
-			response: approved ? { approved: true } : { error: 'Permission denied' }
-		};
+		let response: any;
+		if (approved) {
+			response = {
+				type: 'control_response',
+				response: {
+					subtype: 'success',
+					request_id: requestId,
+					response: {
+						behavior: 'allow',
+						updatedInput: input,
+						toolUseID: toolUseId
+					}
+				}
+			};
+			// Add updatedPermissions if always allow was selected
+			if (alwaysAllowTool) {
+				response.response.response.updatedPermissions = [alwaysAllowTool];
+			}
+		} else {
+			response = {
+				type: 'control_response',
+				response: {
+					subtype: 'success',
+					request_id: requestId,
+					response: {
+						behavior: 'deny',
+						message: 'User denied permission',
+						interrupt: true,
+						toolUseID: toolUseId
+					}
+				}
+			};
+		}
 
 		console.log('[Extension] Response object:', JSON.stringify(response, null, 2));
 		const responseStr = JSON.stringify(response) + '\n';

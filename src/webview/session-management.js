@@ -98,6 +98,13 @@ function toggleConversationHistory() {
 	}
 }
 
+function closeConversationHistory() {
+	const historyDiv = document.getElementById('conversationHistory');
+	const chatContainer = document.getElementById('chatContainer');
+	historyDiv.style.display = 'none';
+	chatContainer.style.display = 'flex';
+}
+
 function requestConversationList() {
 	vscode.postMessage({
 		type: 'getConversationList'
@@ -110,8 +117,7 @@ function loadConversation(conversationId) {
 		type: 'loadConversation',
 		filename: conversationId
 	});
-	console.log('[loadConversation] Message posted, toggling history');
-	toggleConversationHistory();
+	// Note: History panel is closed in message-handler.js when conversationLoaded event is received
 }
 
 function displayConversationList(conversations) {

@@ -425,11 +425,11 @@ export class ConversationManager {
 	 * Get conversation list with metadata
 	 */
 	public getConversationList(): ConversationIndex[] {
-		// Sort by start time (most recent first)
-		// Use endTime as fallback if startTime is empty
+		// Sort by end time (most recently active first)
+		// Use startTime as fallback if endTime is empty
 		return [...this._conversationIndex].sort((a, b) => {
-			const timeA = a.startTime || a.endTime;
-			const timeB = b.startTime || b.endTime;
+			const timeA = a.endTime || a.startTime;
+			const timeB = b.endTime || b.startTime;
 			return new Date(timeB).getTime() - new Date(timeA).getTime();
 		});
 	}

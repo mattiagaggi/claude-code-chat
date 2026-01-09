@@ -128,6 +128,11 @@ export class StreamParser {
 			console.log('[StreamParser] Result data:', JSON.stringify(data));
 			this.callbacks.onResult?.(data);
 
+			// Extract and display the result text if present
+			if (data.result && typeof data.result === 'string' && data.result.trim()) {
+				this.callbacks.onMessage?.(data.result);
+			}
+
 			// Extract usage info
 			if (data.input_tokens && data.output_tokens) {
 				console.log('[StreamParser] Tokens found:', data.input_tokens, data.output_tokens);

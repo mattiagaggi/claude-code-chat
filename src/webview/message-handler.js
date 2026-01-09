@@ -9,7 +9,7 @@ window.addEventListener('message', event => {
 			updateStatusWithTotals();
 			break;
 
-		case 'restoreInputText':
+		case 'restoreInputText': {
 			const inputField = document.getElementById('messageInput');
 			if (inputField && message.data) {
 				inputField.value = message.data;
@@ -17,6 +17,7 @@ window.addEventListener('message', event => {
 				inputField.style.height = Math.min(inputField.scrollHeight, 200) + 'px';
 			}
 			break;
+		}
 
 		case 'output':
 			if (message.data.trim()) {
@@ -155,7 +156,7 @@ window.addEventListener('message', event => {
 			}
 			break;
 
-		case 'sessionInfo':
+		case 'sessionInfo': {
 			const sessionId = message.data.sessionId;
 			showSessionInfo(sessionId);
 			totalTokensInput = message.data.totalTokensInput || 0;
@@ -165,8 +166,9 @@ window.addEventListener('message', event => {
 			subscriptionType = message.data.subscriptionType || null;
 			updateStatusWithTotals();
 			break;
+		}
 
-		case 'imagePath':
+		case 'imagePath': {
 			const currentText = messageInput.value;
 			const pathIndicator = `@${message.path} `;
 			messageInput.value = currentText + pathIndicator;
@@ -177,6 +179,7 @@ window.addEventListener('message', event => {
 			const fileName = message.path.split('/').pop() || message.path;
 			showImageAddedFeedback(fileName);
 			break;
+		}
 
 		case 'restoreCommit':
 			showRestoreContainer(message.data);
@@ -248,21 +251,23 @@ window.addEventListener('message', event => {
 			renderPermissions(message.data);
 			break;
 
-		case 'planModeChanged':
+		case 'planModeChanged': {
 			planModeEnabled = message.data.enabled;
 			const planModeSwitch = document.getElementById('planModeSwitch');
 			if (planModeSwitch) {
 				planModeSwitch.classList.toggle('active', planModeEnabled);
 			}
 			break;
+		}
 
-		case 'thinkingModeChanged':
+		case 'thinkingModeChanged': {
 			thinkingModeEnabled = message.data.enabled;
 			const thinkingModeSwitch = document.getElementById('thinkingModeSwitch');
 			if (thinkingModeSwitch) {
 				thinkingModeSwitch.classList.toggle('active', thinkingModeEnabled);
 			}
 			break;
+		}
 
 		case 'usageUpdate':
 			totalTokensInput = message.data.totalTokensInput || 0;
@@ -286,7 +291,7 @@ window.addEventListener('message', event => {
 			vscode.postMessage({ type: 'getCustomSnippets' });
 			break;
 
-		case 'settingsData':
+		case 'settingsData': {
 			const thinkingIntensity = message.data['thinking.intensity'] || 'think';
 			const intensityValues = ['think', 'think-hard', 'think-harder', 'ultrathink'];
 			const sliderValue = intensityValues.indexOf(thinkingIntensity);
@@ -309,6 +314,7 @@ window.addEventListener('message', event => {
 
 			document.getElementById('wslOptions').style.display = message.data['wsl.enabled'] ? 'block' : 'none';
 			break;
+		}
 
 		case 'platformInfo':
 			if (message.data.isWindows && !message.data.wslAlertDismissed && !message.data.wslEnabled) {
@@ -322,7 +328,7 @@ window.addEventListener('message', event => {
 			renderPermissions(message.data);
 			break;
 
-		case 'sessionCleared':
+		case 'sessionCleared': {
 			// Clear the messages display
 			const messagesDiv = document.getElementById('messages');
 			messagesDiv.innerHTML = '';
@@ -335,8 +341,9 @@ window.addEventListener('message', event => {
 			addMessage('New chat started. Ready for your message!', 'system');
 			updateStatusWithTotals();
 			break;
+		}
 
-		case 'conversationLoaded':
+		case 'conversationLoaded': {
 			console.log('[conversationLoaded] Received conversationLoaded event');
 
 			// Clear processing state
@@ -390,9 +397,10 @@ window.addEventListener('message', event => {
 			}
 
 			console.log('[conversationLoaded] Conversation loaded successfully, closing history view');
-			// Close history view
-			toggleConversationHistory();
+			// Close history view (use explicit close, not toggle)
+			closeConversationHistory();
 			break;
+		}
 
 		case 'mcpServersLoaded':
 			displayMCPServers(message.servers || {});

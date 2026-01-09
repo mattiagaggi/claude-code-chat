@@ -4,7 +4,7 @@
  */
 
 import * as assert from 'assert';
-import { StreamParser, StreamCallbacks } from '../src/handlers/StreamParser';
+import { StreamParser, StreamCallbacks } from '../../src/handlers/StreamParser';
 
 suite('StreamParser Tests', () => {
 

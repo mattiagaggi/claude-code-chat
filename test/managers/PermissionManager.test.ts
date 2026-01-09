@@ -4,7 +4,7 @@
  */
 
 import * as assert from 'assert';
-import { PermissionManager, PendingPermission, StoredPermission } from '../src/managers/PermissionManager';
+import { PermissionManager, PendingPermission, StoredPermission } from '../../src/managers/PermissionManager';
 
 // Mock vscode context
 const mockContext = {

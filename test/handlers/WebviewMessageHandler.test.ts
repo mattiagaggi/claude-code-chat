@@ -12,7 +12,7 @@ const mockContext = {
 };
 
 // Import the handler
-import { WebviewMessageHandler } from '../src/handlers/WebviewMessageHandler';
+import { WebviewMessageHandler } from '../../src/handlers/WebviewMessageHandler';
 
 suite('WebviewMessageHandler Tests', () => {
 

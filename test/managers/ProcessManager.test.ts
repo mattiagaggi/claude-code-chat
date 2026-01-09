@@ -4,7 +4,7 @@
  */
 
 import * as assert from 'assert';
-import { ProcessManager, ProcessConfig } from '../src/managers/ProcessManager';
+import { ProcessManager, ProcessConfig } from '../../src/managers/ProcessManager';
 
 // Note: These tests focus on the ProcessManager's state management and logic
 // without actually spawning Claude processes (which requires the CLI to be installed)

@@ -20,7 +20,7 @@ const mockContext = {
 };
 
 // Import after mocking
-import { ConversationManager, ConversationIndex } from '../src/managers/ConversationManager';
+import { ConversationManager, ConversationIndex } from '../../src/managers/ConversationManager';
 
 suite('ConversationManager Tests', () => {
 

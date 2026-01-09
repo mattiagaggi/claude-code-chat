@@ -4,7 +4,7 @@
  */
 
 import * as assert from 'assert';
-import { StreamParser } from '../src/handlers/StreamParser';
+import { StreamParser } from '../../src/handlers/StreamParser';
 
 suite('Permission Request Flow Tests', () => {
 

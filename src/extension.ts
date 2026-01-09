@@ -677,7 +677,13 @@ class ClaudeChatProvider {
 			};
 			// Add updatedPermissions if always allow was selected
 			if (alwaysAllowTool) {
-				response.response.response.updatedPermissions = [alwaysAllowTool];
+				// Format according to Claude SDK PermissionUpdate type
+				response.response.response.updatedPermissions = [{
+					type: 'addRules',
+					rules: [{ toolName: alwaysAllowTool }],
+					behavior: 'allow',
+					destination: 'session'
+				}];
 			}
 		} else {
 			response = {

@@ -847,6 +847,20 @@
         font-size: 13px;
         color: var(--vscode-editor-foreground);
         opacity: 0.9;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .tool-count-badge {
+        background: var(--vscode-badge-background, rgba(255, 255, 255, 0.15));
+        color: var(--vscode-badge-foreground, var(--vscode-editor-foreground));
+        font-size: 11px;
+        font-weight: 600;
+        padding: 1px 6px;
+        border-radius: 10px;
+        min-width: 16px;
+        text-align: center;
     }
 
     .message-header {

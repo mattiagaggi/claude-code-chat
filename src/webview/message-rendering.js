@@ -24,6 +24,27 @@ function appendToLastClaudeMessage(content) {
 	return false;
 }
 
+function replaceStreamingMessageContent(content) {
+	const messagesDiv = document.getElementById('messages');
+	const messages = messagesDiv.querySelectorAll('.message.claude');
+	const lastClaudeMessage = messages[messages.length - 1];
+
+	if (lastClaudeMessage && lastClaudeMessage.dataset.streamingId === currentStreamingMessageId) {
+		const contentDiv = lastClaudeMessage.querySelector('.message-content');
+		if (contentDiv) {
+			// Replace the entire content (for streaming re-render)
+			contentDiv.innerHTML = content;
+
+			// Auto-scroll if needed
+			if (shouldAutoScroll(messagesDiv)) {
+				messagesDiv.scrollTop = messagesDiv.scrollHeight;
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
 function addMessage(content, type = 'claude') {
 	const messagesDiv = document.getElementById('messages');
 	const shouldScroll = shouldAutoScroll(messagesDiv);
@@ -112,12 +133,36 @@ function sendMessage() {
 	if (!message) return;
 
 	if (isProcessing) {
-		// Add message to queue if Claude is still processing
+		// Check if Claude is executing a tool - if so, cancel and send immediately
+		if (isExecutingTool) {
+			// Cancel current operation and send new message
+			vscode.postMessage({ type: 'stopRequest' });
+
+			// Small delay to let cancellation process, then send
+			setTimeout(() => {
+				vscode.postMessage({
+					type: 'message',
+					content: message,
+					planMode: planModeEnabled,
+					thinkingMode: thinkingModeEnabled
+				});
+			}, 100);
+
+			messageInput.value = '';
+			adjustTextareaHeight();
+			return;
+		}
+
+		// Claude is outputting text - queue the message
 		messageQueue.push({
 			content: message,
 			planMode: planModeEnabled,
 			thinkingMode: thinkingModeEnabled
 		});
+
+		// Show the queued message immediately in the UI
+		addMessage(message, 'user');
+
 		messageInput.value = '';
 		adjustTextareaHeight();
 

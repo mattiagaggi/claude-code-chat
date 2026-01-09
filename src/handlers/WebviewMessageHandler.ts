@@ -10,7 +10,7 @@ export class WebviewMessageHandler {
 	constructor(
 		private readonly context: vscode.ExtensionContext,
 		private readonly callbacks: {
-			onSendMessage: (text: string, planMode?: boolean, thinkingMode?: boolean) => Promise<void>;
+			onSendMessage: (text: string, planMode?: boolean, thinkingMode?: boolean, skipUIDisplay?: boolean) => Promise<void>;
 			onNewSession: () => Promise<void>;
 			onStopRequest: () => Promise<void>;
 			onLoadConversation: (filename: string) => Promise<void>;
@@ -196,7 +196,8 @@ export class WebviewMessageHandler {
 				await this.callbacks.onSendMessage(
 					message.content,
 					message.planMode,
-					message.thinkingMode
+					message.thinkingMode,
+					message.skipUIDisplay
 				);
 				break;
 

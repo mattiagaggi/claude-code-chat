@@ -93,19 +93,33 @@ export class StreamParser {
 			this.callbacks.onToolUse?.(data);
 		} else if (data.type === 'tool_result') {
 			this.callbacks.onToolResult?.(data);
+		} else if (data.type === 'stream_event') {
+			// Handle streaming events from --include-partial-messages
+			const event = data.event;
+			if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+				const text = event.delta.text || '';
+				this.currentMessageContent += text;
+				this.callbacks.onTextDelta?.(text);
+			}
 		} else if (data.type === 'text_delta') {
-			// Accumulate text deltas
+			// Accumulate text deltas (direct format)
 			const text = data.text || '';
 			this.currentMessageContent += text;
 			this.callbacks.onTextDelta?.(text);
 		} else if (data.type === 'assistant') {
 			// Handle assistant message (contains full message with content array)
+			// Text may come from streaming (text_delta events) or directly in content array
+			// Process tool_use items and collect text content
+			let assistantTextContent = '';
 			if (data.message?.content) {
-				// Process all content items
 				for (const contentItem of data.message.content) {
-					if (contentItem.type === 'text' && contentItem.text) {
-						this.callbacks.onMessage?.(contentItem.text);
-					} else if (contentItem.type === 'tool_use') {
+					if (contentItem.type === 'tool_use') {
+						// Before showing tool use, flush any accumulated text as a complete message
+						// This ensures text before tool use is displayed properly
+						if (this.currentMessageContent) {
+							this.callbacks.onMessage?.(this.currentMessageContent);
+							this.currentMessageContent = '';
+						}
 						// Format tool use for display
 						const toolData = {
 							toolName: contentItem.name,
@@ -114,9 +128,23 @@ export class StreamParser {
 							id: contentItem.id
 						};
 						this.callbacks.onToolUse?.(toolData);
+					} else if (contentItem.type === 'text' && contentItem.text) {
+						// Collect text from content array (used when not streaming)
+						assistantTextContent += contentItem.text;
 					}
 				}
 			}
+
+			// Flush accumulated streaming text OR extracted text from content array
+			// Streaming text takes priority (if present, content array text is duplicate)
+			if (this.currentMessageContent) {
+				this.callbacks.onMessage?.(this.currentMessageContent);
+				this.currentMessageContent = '';
+			} else if (assistantTextContent) {
+				// No streaming text was accumulated - use text from content array
+				this.callbacks.onMessage?.(assistantTextContent);
+			}
+
 			// Extract usage from assistant message
 			if (data.message?.usage) {
 				const usage = data.message.usage;
@@ -137,10 +165,20 @@ export class StreamParser {
 		} else if (data.type === 'result') {
 			// Final result with stats
 			console.log('[StreamParser] Result data:', JSON.stringify(data));
-			this.callbacks.onResult?.(data);
 
-			// Note: Don't display result.result text here - it's already shown via the assistant message
-			// The result message is just for stats (tokens, cost, etc.)
+			// If there's accumulated streaming text, flush it first
+			if (this.currentMessageContent) {
+				this.callbacks.onMessage?.(this.currentMessageContent);
+				this.currentMessageContent = '';
+			}
+			// If no streaming text was accumulated but result contains text,
+			// this means the response wasn't streamed - display it now
+			else if (data.result && typeof data.result === 'string') {
+				console.log('[StreamParser] Result contains non-streamed text, displaying');
+				this.callbacks.onMessage?.(data.result);
+			}
+
+			this.callbacks.onResult?.(data);
 
 			// Extract usage info - can be at top level or in usage object
 			const inputTokens = data.input_tokens || data.usage?.input_tokens || 0;

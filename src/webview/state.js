@@ -12,6 +12,7 @@ const fileList = document.getElementById('fileList');
 const imageBtn = document.getElementById('imageBtn');
 
 let isProcessing = false;
+let isExecutingTool = false;
 let filteredFiles = [];
 let selectedFileIndex = -1;
 let planModeEnabled = false;

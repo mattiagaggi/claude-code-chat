@@ -66,13 +66,44 @@ window.addEventListener('message', event => {
 			break;
 
 		case 'textDelta':
-			// Handle streaming text delta
+			// Handle streaming text delta - accumulate full text and re-render
 			if (message.data) {
-				const parsedContent = parseSimpleMarkdown(message.data);
-				if (!appendToLastClaudeMessage(parsedContent)) {
-					// Start new streaming message
-					currentStreamingMessageId = Date.now().toString();
-					addMessage(parsedContent, 'claude');
+				// Initialize streaming state if needed
+				if (!window.streamingState) {
+					window.streamingState = {
+						fullText: '',
+						timeout: null,
+						messageId: null
+					};
+					// Reset tool tracking when text content starts
+					resetToolTracking();
+				}
+
+				// Accumulate the raw text
+				window.streamingState.fullText += message.data;
+
+				// Debounce the UI update (re-render every 50ms)
+				if (!window.streamingState.timeout) {
+					window.streamingState.timeout = setTimeout(() => {
+						if (window.streamingState && window.streamingState.fullText) {
+							const fullText = window.streamingState.fullText;
+							window.streamingState.timeout = null;
+
+							// Parse the FULL accumulated text (not just the delta)
+							const parsedContent = parseSimpleMarkdown(fullText);
+
+							// Replace the entire content of the streaming message
+							if (!window.streamingState.messageId) {
+								// Start new streaming message
+								window.streamingState.messageId = Date.now().toString();
+								currentStreamingMessageId = window.streamingState.messageId;
+								addMessage(parsedContent, 'claude');
+							} else {
+								// Replace content in existing message
+								replaceStreamingMessageContent(parsedContent);
+							}
+						}
+					}, 50);
 				}
 			}
 			break;
@@ -80,8 +111,43 @@ window.addEventListener('message', event => {
 		case 'userInput':
 			// Reset streaming for new user message
 			currentStreamingMessageId = null;
+			window.streamingState = null;
+			resetToolTracking();
 			if (message.data.trim()) {
 				addMessage(parseSimpleMarkdown(message.data), 'user');
+			}
+			break;
+
+		case 'streamingReplay':
+			// Replay accumulated streaming text after visibility change
+			if (message.data) {
+				// Initialize streaming state with the full accumulated text
+				window.streamingState = {
+					fullText: message.data,
+					timeout: null,
+					messageId: Date.now().toString()
+				};
+				currentStreamingMessageId = window.streamingState.messageId;
+
+				// Render the accumulated text
+				const parsedContent = parseSimpleMarkdown(message.data);
+				addMessage(parsedContent, 'claude');
+			}
+			break;
+
+		case 'finalizeStreaming':
+			// Finalize any pending streaming message with complete content
+			if (window.streamingState) {
+				if (window.streamingState.timeout) {
+					clearTimeout(window.streamingState.timeout);
+				}
+				// Use the final content from the server (complete message)
+				if (message.data) {
+					const parsedContent = parseSimpleMarkdown(message.data);
+					replaceStreamingMessageContent(parsedContent);
+				}
+				// Reset streaming state for next message
+				window.streamingState = null;
 			}
 			break;
 
@@ -98,21 +164,37 @@ window.addEventListener('message', event => {
 				disableButtons();
 				showProcessingIndicator();
 			} else {
+				isExecutingTool = false; // Reset tool execution state
 				stopRequestTimer();
 				hideStopButton();
 				enableButtons();
 				hideProcessingIndicator();
 
+				// Flush any remaining streaming state and do final render
+				if (window.streamingState) {
+					if (window.streamingState.timeout) {
+						clearTimeout(window.streamingState.timeout);
+					}
+					// Do final render with complete text
+					if (window.streamingState.fullText) {
+						const parsedContent = parseSimpleMarkdown(window.streamingState.fullText);
+						replaceStreamingMessageContent(parsedContent);
+					}
+					// Reset streaming state for next message
+					window.streamingState = null;
+				}
+
 				// Send next queued message if any exist
 				if (messageQueue.length > 0) {
 					const queued = messageQueue.shift(); // Remove and get first message
 
-					// Send the queued message
+					// Send the queued message (don't show in UI - already shown when queued)
 					vscode.postMessage({
 						type: 'message',
 						content: queued.content,
 						planMode: queued.planMode,
-						thinkingMode: queued.thinkingMode
+						thinkingMode: queued.thinkingMode,
+						skipUIDisplay: true // Tell extension not to add to UI again
 					});
 				}
 			}
@@ -141,11 +223,13 @@ window.addEventListener('message', event => {
 			break;
 
 		case 'toolUse':
+			isExecutingTool = true;
 			addToolUseMessage(message.data);
 			updateStatusWithTotals();
 			break;
 
 		case 'toolResult':
+			isExecutingTool = false;
 			addToolResultMessage(message.data);
 			updateStatusWithTotals();
 			break;
@@ -346,17 +430,16 @@ window.addEventListener('message', event => {
 		case 'conversationLoaded': {
 			console.log('[conversationLoaded] Received conversationLoaded event');
 
-			// Clear processing state
-			isProcessing = false;
-			stopRequestTimer();
-			hideStopButton();
-			enableButtons();
+			// DON'T clear processing state here - it will be set by setProcessing message if needed
+			// The extension sends setProcessing after conversationLoaded if the conversation is processing
 			messageQueue.length = 0; // Clear any queued messages
 
 			// Clear current messages
 			const msgDiv = document.getElementById('messages');
 			msgDiv.innerHTML = '';
 			currentStreamingMessageId = null;
+			window.streamingState = null; // Reset streaming state
+			resetToolTracking(); // Reset tool tracking for fresh display
 
 			console.log('[conversationLoaded] Loading conversation:', message.data);
 
@@ -379,6 +462,19 @@ window.addEventListener('message', event => {
 						addToolResultMessage(msg.data);
 					}
 				});
+			}
+
+			// If there's streaming text included (for processing conversation), render it
+			if (message.data && message.data.streamingText) {
+				console.log('[conversationLoaded] Found streaming text, rendering:', message.data.streamingText.length, 'chars');
+				window.streamingState = {
+					fullText: message.data.streamingText,
+					timeout: null,
+					messageId: Date.now().toString()
+				};
+				currentStreamingMessageId = window.streamingState.messageId;
+				const parsedContent = parseSimpleMarkdown(message.data.streamingText);
+				addMessage(parsedContent, 'claude');
 			}
 
 			// Update usage stats

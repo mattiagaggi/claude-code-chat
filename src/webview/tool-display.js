@@ -1,11 +1,77 @@
 // Tool use and tool result message display functions
 
+// Track consecutive tool uses of same type
+let lastToolUseName = null;
+let lastToolUseCount = 0;
+
+// Reset tool tracking when non-tool content is added
+function resetToolTracking() {
+	lastToolUseName = null;
+	lastToolUseCount = 0;
+}
+
 function addToolUseMessage(data) {
 	const messagesDiv = document.getElementById('messages');
 	const shouldScroll = shouldAutoScroll(messagesDiv);
 
+	let toolName = data.toolInfo.replace('🔧 Executing: ', '');
+	// Replace TodoWrite with more user-friendly name
+	if (toolName === 'TodoWrite') {
+		toolName = 'Update Todos';
+	}
+
+	// Check if this is the same tool type as the last one
+	if (lastToolUseName === toolName) {
+		lastToolUseCount++;
+
+		// Find and update the last tool message instead of creating new one
+		const toolMessages = messagesDiv.querySelectorAll('.message.tool');
+		const lastToolMessage = toolMessages[toolMessages.length - 1];
+
+		if (lastToolMessage && lastToolMessage.dataset.toolName === toolName) {
+			// Update the count badge
+			const toolInfoElement = lastToolMessage.querySelector('.tool-info');
+			if (toolInfoElement) {
+				// Update or add count badge
+				let countBadge = toolInfoElement.querySelector('.tool-count-badge');
+				if (!countBadge) {
+					countBadge = document.createElement('span');
+					countBadge.className = 'tool-count-badge';
+					toolInfoElement.appendChild(countBadge);
+				}
+				countBadge.textContent = ' ' + lastToolUseCount;
+			}
+
+			// Update the tool input content with latest
+			const inputContent = lastToolMessage.querySelector('.tool-input-content');
+			if (inputContent && data.rawInput) {
+				if (data.toolName === 'TodoWrite' && data.rawInput.todos) {
+					let todoHtml = 'Todo List Update:';
+					for (const todo of data.rawInput.todos) {
+						const status = todo.status === 'completed' ? '✅' :
+							todo.status === 'in_progress' ? '🔄' : '⏳';
+						todoHtml += '\n' + status + ' ' + todo.content;
+					}
+					inputContent.innerHTML = todoHtml;
+				} else if (data.toolName === 'Edit' || data.toolName === 'MultiEdit' || data.toolName === 'Write') {
+					// Keep edit/write tools showing their diffs
+				} else {
+					inputContent.innerHTML = formatToolInputUI(data.rawInput);
+				}
+			}
+
+			scrollToBottomIfNeeded(messagesDiv, shouldScroll);
+			return;
+		}
+	}
+
+	// Different tool type or first tool - reset counter
+	lastToolUseName = toolName;
+	lastToolUseCount = 1;
+
 	const messageDiv = document.createElement('div');
 	messageDiv.className = 'message tool';
+	messageDiv.dataset.toolName = toolName;
 
 	// Create modern header with icon
 	const headerDiv = document.createElement('div');
@@ -17,11 +83,6 @@ function addToolUseMessage(data) {
 
 	const toolInfoElement = document.createElement('div');
 	toolInfoElement.className = 'tool-info';
-	let toolName = data.toolInfo.replace('🔧 Executing: ', '');
-	// Replace TodoWrite with more user-friendly name
-	if (toolName === 'TodoWrite') {
-		toolName = 'Update Todos';
-	}
 	toolInfoElement.textContent = toolName;
 
 	headerDiv.appendChild(iconDiv);

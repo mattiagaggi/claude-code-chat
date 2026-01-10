@@ -26,29 +26,29 @@ export class PermissionRequestHandler {
 	/**
 	 * Handle control request (permission prompt)
 	 */
-	async handleControlRequest(requestData: any): Promise<void> {
+	async handleControlRequest(requestData: any, conversationId?: string): Promise<void> {
 		const request_id = requestData.request_id;
 		const tool_name = requestData.request?.tool_name || requestData.tool_name;
 		const input = requestData.request?.input || requestData.input;
 
 		console.log('[PermissionHandler] ⚠️ PERMISSION REQUEST RECEIVED ⚠️');
 		console.log('[PermissionHandler] Control request RAW:', JSON.stringify(requestData, null, 2));
-		console.log('[PermissionHandler] Control request:', { request_id, tool_name, input });
+		console.log('[PermissionHandler] Control request:', { request_id, tool_name, input, conversationId });
 
 		// Handle AskUserQuestion specially - it's not a permission request
 		if (tool_name === 'AskUserQuestion') {
-			this.handleUserQuestion(request_id, input);
+			this.handleUserQuestion(request_id, input, conversationId);
 			return;
 		}
 
 		// Check if auto-approved
 		if (await this.config.permissionManager.shouldAutoApprove(tool_name, input)) {
-			this.sendPermissionResponse(request_id, true);
+			this.sendPermissionResponse(request_id, true, undefined, undefined, undefined, conversationId);
 			return;
 		}
 
-		// Store pending request
-		this.pendingPermissions.set(request_id, requestData);
+		// Store pending request with conversationId
+		this.pendingPermissions.set(request_id, { ...requestData, conversationId });
 
 		// Show UI prompt
 		this.config.postMessage({
@@ -58,7 +58,8 @@ export class PermissionRequestHandler {
 				toolName: tool_name,
 				input,
 				status: 'pending',
-				suggestions: requestData.request?.suggestions || requestData.suggestions
+				suggestions: requestData.request?.suggestions || requestData.suggestions,
+				conversationId
 			}
 		});
 	}
@@ -66,16 +67,17 @@ export class PermissionRequestHandler {
 	/**
 	 * Handle AskUserQuestion tool
 	 */
-	private handleUserQuestion(requestId: string, input: any): void {
-		// Store pending question
-		this.pendingPermissions.set(requestId, { request_id: requestId, tool_name: 'AskUserQuestion', input });
+	private handleUserQuestion(requestId: string, input: any, conversationId?: string): void {
+		// Store pending question with conversationId
+		this.pendingPermissions.set(requestId, { request_id: requestId, tool_name: 'AskUserQuestion', input, conversationId });
 
 		// Send to UI
 		this.config.postMessage({
 			type: 'userQuestion',
 			data: {
 				id: requestId,
-				questions: input.questions || []
+				questions: input.questions || [],
+				conversationId
 			}
 		});
 	}
@@ -90,12 +92,13 @@ export class PermissionRequestHandler {
 		const tool_name = request.request?.tool_name || request.tool_name;
 		const input = request.request?.input || request.input;
 		const tool_use_id = request.request?.tool_use_id || request.tool_use_id;
+		const conversationId = request.conversationId;
 
 		if (approved && alwaysAllow) {
 			this.config.permissionManager.addAlwaysAllowPermission(tool_name, input);
 		}
 
-		this.sendPermissionResponse(id, approved, input, tool_use_id, alwaysAllow ? tool_name : undefined);
+		this.sendPermissionResponse(id, approved, input, tool_use_id, alwaysAllow ? tool_name : undefined, conversationId);
 		this.pendingPermissions.delete(id);
 	}
 
@@ -106,6 +109,8 @@ export class PermissionRequestHandler {
 		const request = this.pendingPermissions.get(id);
 		if (!request) return;
 
+		const conversationId = request.conversationId;
+
 		// Send answer back to Claude
 		const response = {
 			type: 'control_response',
@@ -113,8 +118,15 @@ export class PermissionRequestHandler {
 			response: { answers }
 		};
 
-		console.log('[PermissionHandler] Sending user question response:', response);
-		const writeResult = this.config.processManager.write(JSON.stringify(response) + '\n');
+		console.log('[PermissionHandler] Sending user question response:', response, 'to conversation:', conversationId);
+
+		// Write to the specific conversation's process if conversationId provided
+		let writeResult: boolean;
+		if (conversationId) {
+			writeResult = this.config.processManager.writeToConversation(conversationId, JSON.stringify(response) + '\n');
+		} else {
+			writeResult = this.config.processManager.write(JSON.stringify(response) + '\n');
+		}
 		console.log('[PermissionHandler] Write result:', writeResult);
 
 		this.pendingPermissions.delete(id);
@@ -123,11 +135,12 @@ export class PermissionRequestHandler {
 	/**
 	 * Send permission response to Claude
 	 */
-	private sendPermissionResponse(requestId: string, approved: boolean, input?: any, toolUseId?: string, alwaysAllowTool?: string): void {
+	private sendPermissionResponse(requestId: string, approved: boolean, input?: any, toolUseId?: string, alwaysAllowTool?: string, conversationId?: string): void {
 		console.log('[PermissionHandler] ========== SENDING PERMISSION RESPONSE ==========');
 		console.log('[PermissionHandler] Request ID:', requestId);
 		console.log('[PermissionHandler] Approved:', approved);
 		console.log('[PermissionHandler] Tool Use ID:', toolUseId);
+		console.log('[PermissionHandler] Conversation ID:', conversationId);
 
 		let response: any;
 		if (approved) {
@@ -174,14 +187,28 @@ export class PermissionRequestHandler {
 		console.log('[PermissionHandler] Response string:', responseStr);
 		console.log('[PermissionHandler] Response bytes:', Buffer.from(responseStr).length);
 
-		// Check stdin state before write
-		console.log('[PermissionHandler] Process running before write:', this.config.processManager.isRunning());
-
-		const writeResult = this.config.processManager.write(responseStr);
+		// Write to the specific conversation's process if conversationId provided
+		// Otherwise fall back to the current process (legacy behavior)
+		let writeResult: boolean;
+		if (conversationId) {
+			console.log('[PermissionHandler] Writing to conversation:', conversationId);
+			writeResult = this.config.processManager.writeToConversation(conversationId, responseStr);
+		} else {
+			console.log('[PermissionHandler] Writing to current process (no conversationId)');
+			console.log('[PermissionHandler] Process running before write:', this.config.processManager.isRunning());
+			writeResult = this.config.processManager.write(responseStr);
+		}
 		console.log('[PermissionHandler] Write result:', writeResult);
 
 		// Verify the process is still running
-		if (this.config.processManager.isRunning()) {
+		if (conversationId) {
+			const isRunning = this.config.processManager.isConversationRunning(conversationId);
+			if (isRunning) {
+				console.log('[PermissionHandler] Conversation process is still running after write ✓');
+			} else {
+				console.error('[PermissionHandler] Conversation process died after write! ✗');
+			}
+		} else if (this.config.processManager.isRunning()) {
 			console.log('[PermissionHandler] Process is still running after write ✓');
 		} else {
 			console.error('[PermissionHandler] Process died after write! ✗');
@@ -194,7 +221,10 @@ export class PermissionRequestHandler {
 		let checkCount = 0;
 		const checkInterval = setInterval(() => {
 			checkCount++;
-			console.log(`[PermissionHandler] Check ${checkCount}/5: processRunning=${this.config.processManager.isRunning()}`);
+			const running = conversationId
+				? this.config.processManager.isConversationRunning(conversationId)
+				: this.config.processManager.isRunning();
+			console.log(`[PermissionHandler] Check ${checkCount}/5: processRunning=${running}`);
 			if (checkCount >= 5) {
 				clearInterval(checkInterval);
 			}
@@ -203,7 +233,10 @@ export class PermissionRequestHandler {
 		// Set a timeout to detect if Claude isn't responding
 		setTimeout(() => {
 			clearInterval(checkInterval);
-			if (this.config.processManager.isRunning()) {
+			const running = conversationId
+				? this.config.processManager.isConversationRunning(conversationId)
+				: this.config.processManager.isRunning();
+			if (running) {
 				console.warn('[PermissionHandler] Claude has not responded 10 seconds after permission approval');
 				console.warn('[PermissionHandler] This might indicate the process is stuck');
 			}

@@ -28,7 +28,7 @@ export interface StreamCallbacksConfig {
 	getStreamingText: (conversationId: string) => string | undefined;
 	setStreamingText: (conversationId: string, text: string) => void;
 	deleteStreamingText: (conversationId: string) => void;
-	onControlRequest: (request: any) => void;
+	onControlRequest: (request: any, conversationId?: string) => void;
 }
 
 export function createStreamCallbacks(config: StreamCallbacksConfig): StreamCallbacks {
@@ -242,20 +242,28 @@ export function createStreamCallbacks(config: StreamCallbacksConfig): StreamCall
 			// This ensures onTokenUsage/onCostUpdate callbacks can still access processingConvId
 			//
 			// End-of-turn detection:
-			// - is_done === true: explicit completion flag
-			// - stop_reason: indicates why model stopped (e.g., "end_turn", "tool_use")
-			// - stop_reason === "end_turn": model finished its response
-			// - subtype === 'success' with cost/tokens: final result with billing info
-			// - subtype starts with 'error': error cases should end processing
+			// The 'result' message type indicates the end of a Claude response.
+			// We need to distinguish between:
+			// - Final result (end of turn): should stop processing
+			// - Tool use result: Claude will continue after tool execution
 			//
-			// Note: Intermediate tool results may have subtype 'success' but typically no cost info
-			const hasBillingInfo = (inputTokens > 0 || outputTokens > 0 || cost > 0);
-			const isEndOfTurn = data.is_done === true ||
-				data.stop_reason === 'end_turn' ||
-				(data.subtype === 'success' && hasBillingInfo) ||
-				data.subtype?.startsWith('error');
+			// Tool use continuation is indicated by stop_reason === 'tool_use'
+			const isToolUseResult = data.stop_reason === 'tool_use';
 
-			console.log('[StreamCallbacksFactory] isEndOfTurn check:', { isEndOfTurn, is_done: data.is_done, stop_reason: data.stop_reason, subtype: data.subtype, hasBillingInfo });
+			// For 'result' type messages, default to ending the turn unless it's a tool_use
+			// This handles cases where subtype/is_done may not be present
+			const isResultMessage = data.type === 'result';
+			const isEndOfTurn = isResultMessage && !isToolUseResult;
+
+			console.log('[StreamCallbacksFactory] isEndOfTurn check:', {
+				isEndOfTurn,
+				isResultMessage,
+				isToolUseResult,
+				type: data.type,
+				is_done: data.is_done,
+				stop_reason: data.stop_reason,
+				subtype: data.subtype
+			});
 
 			if (isEndOfTurn) {
 				postMessage({
@@ -263,7 +271,7 @@ export function createStreamCallbacks(config: StreamCallbacksConfig): StreamCall
 					data: { isProcessing: false },
 					conversationId: convId
 				});
-				setProcessingState(false);
+				setProcessingState(false, convId);
 			}
 		},
 
@@ -288,8 +296,8 @@ export function createStreamCallbacks(config: StreamCallbacksConfig): StreamCall
 			}
 		},
 
-		onControlRequest: (request: any) => {
-			onControlRequest(request);
+		onControlRequest: (request: any, conversationId?: string) => {
+			onControlRequest(request, conversationId);
 		},
 
 		onControlResponse: (response: any) => {

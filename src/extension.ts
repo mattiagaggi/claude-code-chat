@@ -192,7 +192,7 @@ class ClaudeChatProvider {
 			getStreamingText: (id) => this.conversationStreamingText.get(id),
 			setStreamingText: (id, text) => this.conversationStreamingText.set(id, text),
 			deleteStreamingText: (id) => this.conversationStreamingText.delete(id),
-			onControlRequest: (request) => this.handleControlRequest(request)
+			onControlRequest: (request, conversationId) => this.handleControlRequest(request, conversationId)
 		}));
 
 		// Load saved state
@@ -584,8 +584,8 @@ class ClaudeChatProvider {
 	/**
 	 * Handle control request (permission prompt)
 	 */
-	private async handleControlRequest(requestData: any) {
-		await this.permissionRequestHandler.handleControlRequest(requestData);
+	private async handleControlRequest(requestData: any, conversationId?: string) {
+		await this.permissionRequestHandler.handleControlRequest(requestData, conversationId);
 	}
 
 	/**

@@ -259,7 +259,11 @@ window.addEventListener('message', event => {
 			break;
 
 		case 'setProcessing':
-			// Only update processing state if for current conversation
+			// Always update tabs processing state for any conversation
+			if (message.conversationId) {
+				setConversationProcessing(message.conversationId, message.data.isProcessing);
+			}
+			// Only update local processing state if for current conversation
 			if (isMessageForCurrentConversation(message)) {
 				isProcessing = message.data.isProcessing;
 				if (isProcessing) {

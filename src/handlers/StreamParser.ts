@@ -5,6 +5,9 @@
  * Handles different message types: tool_use, text_delta, result, control_request, etc.
  * Triggers callbacks for each parsed event type, allowing the extension to react
  * to streaming responses, tool executions, and permission requests.
+ *
+ * IMPORTANT: Uses per-conversation state to support multiple concurrent processes.
+ * Each conversation has its own buffer, message content, and tool mappings.
  */
 
 export interface StreamCallbacks {
@@ -18,58 +21,77 @@ export interface StreamCallbacks {
 	onResult?: (data: any, conversationId?: string) => void;
 	onError?: (error: string, conversationId?: string) => void;
 	onAccountInfo?: (info: any) => void;
-	onControlRequest?: (request: any) => void;
+	onControlRequest?: (request: any, conversationId?: string) => void;
 	onControlResponse?: (response: any) => void;
 }
 
+/**
+ * Per-conversation parser state
+ */
+interface ConversationParserState {
+	buffer: string;
+	currentMessageContent: string;
+	currentStreamingMessageId: string | null;
+	toolIdToName: Map<string, string>;
+	messageSentThisTurn: boolean;
+}
+
 export class StreamParser {
-	private buffer: string = '';
-	private currentMessageContent: string = '';
-	private currentStreamingMessageId: string | null = null;
-	// Track tool IDs to tool names for mapping tool_result to toolName
-	private toolIdToName: Map<string, string> = new Map();
-	// Track if we've already sent a message for this turn (to avoid duplicates from result.result)
-	private messageSentThisTurn: boolean = false;
-	// Current conversation ID context for this parsing session
-	private currentConversationId: string | undefined;
+	// Per-conversation state - isolates each conversation's parsing
+	private conversationStates: Map<string, ConversationParserState> = new Map();
+
+	// Fallback state for when no conversationId is provided (legacy behavior)
+	private defaultState: ConversationParserState = this.createEmptyState();
 
 	constructor(private callbacks: StreamCallbacks) {}
 
 	/**
-	 * Set the conversation ID context for subsequent parseChunk calls
-	 * This should be called before parsing data from a specific conversation's process
+	 * Create empty parser state for a conversation
 	 */
-	public setConversationContext(conversationId: string | undefined): void {
-		this.currentConversationId = conversationId;
+	private createEmptyState(): ConversationParserState {
+		return {
+			buffer: '',
+			currentMessageContent: '',
+			currentStreamingMessageId: null,
+			toolIdToName: new Map(),
+			messageSentThisTurn: false
+		};
 	}
 
 	/**
-	 * Get the current conversation context
+	 * Get or create state for a conversation
 	 */
-	public getConversationContext(): string | undefined {
-		return this.currentConversationId;
+	private getState(conversationId?: string): ConversationParserState {
+		if (!conversationId) {
+			return this.defaultState;
+		}
+
+		let state = this.conversationStates.get(conversationId);
+		if (!state) {
+			state = this.createEmptyState();
+			this.conversationStates.set(conversationId, state);
+		}
+		return state;
 	}
 
 	/**
-	 * Parse incoming chunk of data
+	 * Parse incoming chunk of data for a specific conversation
 	 */
 	public parseChunk(chunk: string, conversationId?: string): void {
-		// If conversationId is provided, use it; otherwise use the stored context
-		if (conversationId !== undefined) {
-			this.currentConversationId = conversationId;
-		}
-		console.log('[StreamParser] Received chunk:', chunk.length, 'bytes');
-		this.buffer += chunk;
-		const lines = this.buffer.split('\n');
+		const state = this.getState(conversationId);
+
+		console.log('[StreamParser] Received chunk:', chunk.length, 'bytes', 'for conversation:', conversationId);
+		state.buffer += chunk;
+		const lines = state.buffer.split('\n');
 
 		// Keep the last incomplete line in the buffer
-		this.buffer = lines.pop() || '';
-		console.log('[StreamParser] Processing', lines.length, 'complete lines, buffer has', this.buffer.length, 'bytes remaining');
+		state.buffer = lines.pop() || '';
+		console.log('[StreamParser] Processing', lines.length, 'complete lines, buffer has', state.buffer.length, 'bytes remaining');
 
 		for (const line of lines) {
 			if (line.trim()) {
 				console.log('[StreamParser] Processing line:', line.substring(0, 100));
-				this.processLine(line);
+				this.processLine(line, conversationId, state);
 			}
 		}
 	}
@@ -77,10 +99,10 @@ export class StreamParser {
 	/**
 	 * Process a single line of JSON
 	 */
-	private processLine(line: string): void {
+	private processLine(line: string, conversationId: string | undefined, state: ConversationParserState): void {
 		try {
 			const jsonData = JSON.parse(line);
-			this.processJsonData(jsonData);
+			this.processJsonData(jsonData, conversationId, state);
 		} catch (error) {
 			console.error('Failed to parse JSON line:', line, error);
 		}
@@ -88,16 +110,15 @@ export class StreamParser {
 
 	/**
 	 * Process parsed JSON data
-	 * All callbacks receive the currentConversationId so they know which conversation this data belongs to
+	 * All callbacks receive the conversationId so they know which conversation this data belongs to
 	 */
-	private processJsonData(data: any): void {
-		console.log('[StreamParser] Processing JSON data type:', data.type, 'for conversation:', this.currentConversationId);
-		const convId = this.currentConversationId;
+	private processJsonData(data: any, convId: string | undefined, state: ConversationParserState): void {
+		console.log('[StreamParser] Processing JSON data type:', data.type, 'for conversation:', convId);
 
 		// Handle control messages
 		if (data.type === 'control_request') {
-			console.log('[StreamParser] Control request received');
-			this.callbacks.onControlRequest?.(data);
+			console.log('[StreamParser] Control request received for conversation:', convId);
+			this.callbacks.onControlRequest?.(data, convId);
 			return;
 		}
 
@@ -114,8 +135,8 @@ export class StreamParser {
 		}
 
 		// Handle session start
-		if (data.session_id && !this.currentStreamingMessageId) {
-			this.currentStreamingMessageId = data.session_id;
+		if (data.session_id && !state.currentStreamingMessageId) {
+			state.currentStreamingMessageId = data.session_id;
 			this.callbacks.onSessionStart?.(data.session_id, convId);
 		}
 
@@ -130,12 +151,12 @@ export class StreamParser {
 			};
 			// Track tool ID to name mapping for tool_result
 			if (data.id && data.name) {
-				this.toolIdToName.set(data.id, data.name);
+				state.toolIdToName.set(data.id, data.name);
 			}
 			this.callbacks.onToolUse?.(toolData, convId);
 		} else if (data.type === 'tool_result') {
 			// Normalize tool_result data format to match expected UI structure
-			const toolName = this.toolIdToName.get(data.tool_use_id) || 'Unknown';
+			const toolName = state.toolIdToName.get(data.tool_use_id) || 'Unknown';
 			const toolResultData = {
 				toolName: toolName,
 				content: data.content,
@@ -148,13 +169,13 @@ export class StreamParser {
 			const event = data.event;
 			if (event?.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
 				const text = event.delta.text || '';
-				this.currentMessageContent += text;
+				state.currentMessageContent += text;
 				this.callbacks.onTextDelta?.(text, convId);
 			}
 		} else if (data.type === 'text_delta') {
 			// Accumulate text deltas (direct format)
 			const text = data.text || '';
-			this.currentMessageContent += text;
+			state.currentMessageContent += text;
 			this.callbacks.onTextDelta?.(text, convId);
 		} else if (data.type === 'assistant') {
 			// Handle assistant message (contains full message with content array)
@@ -166,9 +187,9 @@ export class StreamParser {
 					if (contentItem.type === 'tool_use') {
 						// Before showing tool use, flush any accumulated text as a complete message
 						// This ensures text before tool use is displayed properly
-						if (this.currentMessageContent) {
-							this.callbacks.onMessage?.(this.currentMessageContent, convId);
-							this.currentMessageContent = '';
+						if (state.currentMessageContent) {
+							this.callbacks.onMessage?.(state.currentMessageContent, convId);
+							state.currentMessageContent = '';
 						}
 						// Format tool use for display
 						const toolData = {
@@ -179,7 +200,7 @@ export class StreamParser {
 						};
 						// Track tool ID to name mapping for tool_result
 						if (contentItem.id && contentItem.name) {
-							this.toolIdToName.set(contentItem.id, contentItem.name);
+							state.toolIdToName.set(contentItem.id, contentItem.name);
 						}
 						this.callbacks.onToolUse?.(toolData, convId);
 					} else if (contentItem.type === 'text' && contentItem.text) {
@@ -191,14 +212,14 @@ export class StreamParser {
 
 			// Flush accumulated streaming text OR extracted text from content array
 			// Streaming text takes priority (if present, content array text is duplicate)
-			if (this.currentMessageContent) {
-				this.callbacks.onMessage?.(this.currentMessageContent, convId);
-				this.currentMessageContent = '';
-				this.messageSentThisTurn = true;
+			if (state.currentMessageContent) {
+				this.callbacks.onMessage?.(state.currentMessageContent, convId);
+				state.currentMessageContent = '';
+				state.messageSentThisTurn = true;
 			} else if (assistantTextContent) {
 				// No streaming text was accumulated - use text from content array
 				this.callbacks.onMessage?.(assistantTextContent, convId);
-				this.messageSentThisTurn = true;
+				state.messageSentThisTurn = true;
 			}
 
 			// Extract usage from assistant message
@@ -215,32 +236,32 @@ export class StreamParser {
 			}
 		} else if (data.type === 'message') {
 			// Full message received
-			if (this.currentMessageContent) {
-				this.callbacks.onMessage?.(this.currentMessageContent, convId);
-				this.currentMessageContent = '';
-				this.messageSentThisTurn = true;
+			if (state.currentMessageContent) {
+				this.callbacks.onMessage?.(state.currentMessageContent, convId);
+				state.currentMessageContent = '';
+				state.messageSentThisTurn = true;
 			}
 		} else if (data.type === 'result') {
 			// Final result with stats
 			console.log('[StreamParser] Result data:', JSON.stringify(data));
 
 			// If there's accumulated streaming text, flush it first
-			if (this.currentMessageContent) {
-				this.callbacks.onMessage?.(this.currentMessageContent, convId);
-				this.currentMessageContent = '';
-				this.messageSentThisTurn = true;
+			if (state.currentMessageContent) {
+				this.callbacks.onMessage?.(state.currentMessageContent, convId);
+				state.currentMessageContent = '';
+				state.messageSentThisTurn = true;
 			}
 			// If no message was sent this turn and result contains text,
 			// this means the response wasn't streamed - display it now
 			// (avoid duplicates if assistant message already sent the text)
-			else if (!this.messageSentThisTurn && data.result && typeof data.result === 'string') {
+			else if (!state.messageSentThisTurn && data.result && typeof data.result === 'string') {
 				console.log('[StreamParser] Result contains non-streamed text, displaying');
 				this.callbacks.onMessage?.(data.result, convId);
 			}
 
 			this.callbacks.onResult?.(data, convId);
 			// Reset the flag for the next turn
-			this.messageSentThisTurn = false;
+			state.messageSentThisTurn = false;
 
 			// Extract usage info - can be at top level or in usage object
 			// Also check for nested result.usage structure
@@ -269,28 +290,51 @@ export class StreamParser {
 			}
 
 			// Reset for next message
-			this.currentMessageContent = '';
-			this.currentStreamingMessageId = null;
+			state.currentMessageContent = '';
+			state.currentStreamingMessageId = null;
 		} else if (data.type === 'error') {
 			this.callbacks.onError?.(data.message || 'Unknown error', convId);
 		}
 	}
 
 	/**
-	 * Reset parser state
+	 * Reset parser state for a specific conversation
 	 */
-	public reset(): void {
-		this.buffer = '';
-		this.currentMessageContent = '';
-		this.currentStreamingMessageId = null;
-		this.toolIdToName.clear();
-		this.messageSentThisTurn = false;
+	public resetConversation(conversationId: string): void {
+		this.conversationStates.delete(conversationId);
 	}
 
 	/**
-	 * Get current message content
+	 * Reset all parser state (legacy method for compatibility)
 	 */
-	public getCurrentMessage(): string {
-		return this.currentMessageContent;
+	public reset(): void {
+		this.conversationStates.clear();
+		this.defaultState = this.createEmptyState();
+	}
+
+	/**
+	 * Get current message content for a conversation
+	 */
+	public getCurrentMessage(conversationId?: string): string {
+		const state = this.getState(conversationId);
+		return state.currentMessageContent;
+	}
+
+	/**
+	 * Set the conversation ID context - kept for compatibility but no longer needed
+	 * @deprecated Use parseChunk(chunk, conversationId) instead
+	 */
+	public setConversationContext(_conversationId: string | undefined): void {
+		// No-op - kept for backwards compatibility
+		// Conversation context is now passed directly to parseChunk
+	}
+
+	/**
+	 * Get the current conversation context - kept for compatibility
+	 * @deprecated Conversation context is now managed per-call
+	 */
+	public getConversationContext(): string | undefined {
+		// Return undefined - context is no longer stored globally
+		return undefined;
 	}
 }

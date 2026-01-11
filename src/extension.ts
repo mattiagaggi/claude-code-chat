@@ -260,8 +260,8 @@ class ClaudeChatProvider {
 				!this.suggestionShownThisIdle) {
 
 				const idleTime = Date.now() - this.lastToolCallTime;
-				// Show suggestion after 1 second of no tool activity
-				if (idleTime >= 1000) {
+				// Show suggestion after 4 seconds of no tool activity
+				if (idleTime >= 4000) {
 					this.showNextSuggestion();
 					this.suggestionShownThisIdle = true;
 				}

@@ -27,6 +27,7 @@ import {
 	enableYoloMode as utilEnableYoloMode,
 	getPlatformInfo
 } from './handlers';
+import { CodeAnalyzer } from './handlers/CodeAnalyzer';
 
 export function activate(context: vscode.ExtensionContext) {
 	// Create multiple providers for multi-chat support
@@ -141,6 +142,12 @@ class ClaudeChatProvider {
 	// Track which conversations have active processes (supports multiple concurrent processes)
 	private processingConversationIds: Set<string> = new Set();
 
+	// Code analyzer for background suggestions
+	private codeAnalyzer: CodeAnalyzer | undefined;
+	private idleTimer: NodeJS.Timeout | undefined;
+	private lastToolCallTime: number = 0;
+	private suggestionShownThisIdle: boolean = false;
+
 	constructor(
 		private readonly extensionUri: vscode.Uri,
 		private readonly context: vscode.ExtensionContext,
@@ -192,7 +199,8 @@ class ClaudeChatProvider {
 			getStreamingText: (id) => this.conversationStreamingText.get(id),
 			setStreamingText: (id, text) => this.conversationStreamingText.set(id, text),
 			deleteStreamingText: (id) => this.conversationStreamingText.delete(id),
-			onControlRequest: (request, conversationId) => this.handleControlRequest(request, conversationId)
+			onControlRequest: (request, conversationId) => this.handleControlRequest(request, conversationId),
+			onToolActivity: () => this.resetIdleTimer()
 		}));
 
 		// Load saved state
@@ -200,6 +208,96 @@ class ClaudeChatProvider {
 
 		// Set initial conversation ID from conversation manager
 		this.currentConversationId = this.conversationManager.getActiveConversationId();
+
+		// Start background code analysis (only for first chat provider)
+		if (chatNumber === 1) {
+			this.initializeCodeAnalyzer();
+		}
+	}
+
+	/**
+	 * Initialize code analyzer and start background analysis
+	 */
+	private initializeCodeAnalyzer(): void {
+		const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+		if (!workspaceFolder) {
+			console.log('[CodeAnalyzer] No workspace folder - skipping analysis');
+			return;
+		}
+
+		// Use 'claude' command (should be in PATH)
+		this.codeAnalyzer = new CodeAnalyzer(workspaceFolder, 'claude');
+
+		// Delay analysis start to not interfere with extension initialization
+		setTimeout(() => {
+			this.codeAnalyzer?.startBackgroundAnalysis();
+		}, 5000);
+	}
+
+	/**
+	 * Start idle detection timer during processing
+	 * Shows a suggestion if no tool calls for 10+ seconds
+	 */
+	private startIdleDetection(): void {
+		this.stopIdleDetection();
+		this.lastToolCallTime = Date.now();
+		this.suggestionShownThisIdle = false;
+
+		this.idleTimer = setInterval(() => {
+			// Only show during processing, when we have results, and haven't shown yet this idle period
+			if (this.processingConversationIds.size > 0 &&
+				this.codeAnalyzer?.hasResults() &&
+				!this.suggestionShownThisIdle) {
+
+				const idleTime = Date.now() - this.lastToolCallTime;
+				// Show suggestion after 10 seconds of no tool activity
+				if (idleTime >= 10000) {
+					this.showNextSuggestion();
+					this.suggestionShownThisIdle = true;
+				}
+			}
+		}, 2000);
+	}
+
+	/**
+	 * Stop idle detection timer
+	 */
+	private stopIdleDetection(): void {
+		if (this.idleTimer) {
+			clearInterval(this.idleTimer);
+			this.idleTimer = undefined;
+		}
+	}
+
+	/**
+	 * Reset idle timer (called when tool activity happens)
+	 */
+	private resetIdleTimer(): void {
+		this.lastToolCallTime = Date.now();
+		this.suggestionShownThisIdle = false;
+	}
+
+	/**
+	 * Show the next code improvement suggestion to the user
+	 */
+	private showNextSuggestion(): void {
+		if (!this.codeAnalyzer) return;
+
+		const suggestion = this.codeAnalyzer.getNextSuggestion();
+		if (!suggestion) return;
+
+		const remaining = this.codeAnalyzer.getRemainingCount();
+
+		this.postMessage({
+			type: 'codeSuggestion',
+			data: {
+				title: suggestion.title,
+				description: suggestion.description,
+				priority: suggestion.priority,
+				category: suggestion.category,
+				remaining: remaining
+			}
+		});
 	}
 
 	/**
@@ -480,6 +578,9 @@ class ClaudeChatProvider {
 		// Update tabs UI to show this conversation is processing
 		this.conversationHandler.sendActiveConversations();
 
+		// Start idle detection for showing code suggestions
+		this.startIdleDetection();
+
 		try {
 			// Spawn process for this specific conversation (doesn't affect other conversations)
 			const process = await this.processManager.spawnForConversation({
@@ -539,6 +640,11 @@ class ClaudeChatProvider {
 				// Remove from processing set
 				this.processingConversationIds.delete(spawnedConversationId);
 
+				// Stop idle detection if no more processing conversations
+				if (this.processingConversationIds.size === 0) {
+					this.stopIdleDetection();
+				}
+
 				// Send with conversationId - webview will filter based on current view
 				this.postMessage({ type: 'clearLoading', conversationId: spawnedConversationId });
 				this.postMessage({ type: 'setProcessing', data: { isProcessing: false }, conversationId: spawnedConversationId });
@@ -553,6 +659,11 @@ class ClaudeChatProvider {
 
 				// Remove from processing set
 				this.processingConversationIds.delete(spawnedConversationId);
+
+				// Stop idle detection if no more processing conversations
+				if (this.processingConversationIds.size === 0) {
+					this.stopIdleDetection();
+				}
 
 				// Send with conversationId - webview will filter based on current view
 				this.postMessage({ type: 'clearLoading', conversationId: spawnedConversationId });

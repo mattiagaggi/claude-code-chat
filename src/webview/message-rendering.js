@@ -219,3 +219,50 @@ function toggleThinkingMode() {
 function sendStats(eventName) {
 	vscode.postMessage({ type: 'sendStats', eventName });
 }
+
+/**
+ * Show a code improvement suggestion in the chat
+ * Displayed during long idle periods while processing
+ */
+function showCodeSuggestion(data) {
+	const messagesDiv = document.getElementById('messages');
+	if (!messagesDiv) return;
+
+	// Don't show if there's already a suggestion visible
+	const existingSuggestion = messagesDiv.querySelector('.code-suggestion');
+	if (existingSuggestion) {
+		existingSuggestion.remove();
+	}
+
+	const shouldScroll = shouldAutoScroll(messagesDiv);
+
+	const suggestionDiv = document.createElement('div');
+	suggestionDiv.className = 'code-suggestion';
+
+	// Priority badge color
+	const priorityColors = {
+		high: '#f14c4c',
+		medium: '#cca700',
+		low: '#89d185'
+	};
+	const priorityColor = priorityColors[data.priority] || priorityColors.medium;
+
+	suggestionDiv.innerHTML = `
+		<div class="suggestion-header">
+			<span class="suggestion-icon">💡</span>
+			<span class="suggestion-label">Code Improvement Tip</span>
+			<span class="suggestion-priority" style="background: ${priorityColor}">${data.priority}</span>
+			<span class="suggestion-category">${data.category}</span>
+			<button class="suggestion-dismiss" onclick="this.closest('.code-suggestion').remove()">✕</button>
+		</div>
+		<div class="suggestion-title">${escapeHtml(data.title)}</div>
+		<div class="suggestion-description">${escapeHtml(data.description)}</div>
+		${data.remaining > 0 ? `<div class="suggestion-remaining">${data.remaining} more suggestion${data.remaining > 1 ? 's' : ''} available</div>` : ''}
+	`;
+
+	messagesDiv.appendChild(suggestionDiv);
+
+	if (shouldScroll) {
+		messagesDiv.scrollTop = messagesDiv.scrollHeight;
+	}
+}

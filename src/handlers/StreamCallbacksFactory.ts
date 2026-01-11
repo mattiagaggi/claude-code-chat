@@ -29,6 +29,7 @@ export interface StreamCallbacksConfig {
 	setStreamingText: (conversationId: string, text: string) => void;
 	deleteStreamingText: (conversationId: string) => void;
 	onControlRequest: (request: any, conversationId?: string) => void;
+	onToolActivity?: () => void; // Called when tool use/result happens (for idle detection reset)
 }
 
 export function createStreamCallbacks(config: StreamCallbacksConfig): StreamCallbacks {
@@ -43,7 +44,8 @@ export function createStreamCallbacks(config: StreamCallbacksConfig): StreamCall
 		getStreamingText,
 		setStreamingText,
 		deleteStreamingText,
-		onControlRequest
+		onControlRequest,
+		onToolActivity
 	} = config;
 
 	// Helper to send conversation list with processing state
@@ -81,6 +83,8 @@ export function createStreamCallbacks(config: StreamCallbacksConfig): StreamCall
 				data,
 				conversationId: convId
 			});
+			// Notify of tool activity (resets idle timer for code suggestions)
+			onToolActivity?.();
 		},
 
 		onToolResult: (data: any, conversationId?: string) => {
@@ -94,6 +98,8 @@ export function createStreamCallbacks(config: StreamCallbacksConfig): StreamCall
 				data,
 				conversationId: convId
 			});
+			// Notify of tool activity (resets idle timer for code suggestions)
+			onToolActivity?.();
 		},
 
 		onTextDelta: (text: string, conversationId?: string) => {

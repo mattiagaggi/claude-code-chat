@@ -772,5 +772,12 @@ window.addEventListener('message', event => {
 				setConversationProcessing(message.conversationId, message.isProcessing);
 			}
 			break;
+
+		case 'codeSuggestion':
+			// Show code improvement suggestion during idle time
+			if (message.data && isProcessing) {
+				showCodeSuggestion(message.data);
+			}
+			break;
 	}
 });

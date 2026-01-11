@@ -572,6 +572,8 @@ window.addEventListener('message', event => {
 			totalTokensOutput = 0;
 			totalCost = 0;
 			requestCount = 0;
+			currentContextUsed = 0;
+			contextWindow = 200000;
 
 			// Show ready message
 			addMessage('New chat started. Ready for your message!', 'system');

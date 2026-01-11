@@ -62,7 +62,7 @@ function updateStatusWithTotals() {
 			elapsedStr = ` • ${elapsedSeconds}s`;
 		}
 
-		const statusText = `Processing • ${tokensStr}${elapsedStr}`;
+		const statusText = tokensStr ? `Processing • ${tokensStr}${elapsedStr}` : `Processing${elapsedStr}`;
 		updateStatus(statusText, 'processing');
 	} else {
 		// When ready, show full info
@@ -87,7 +87,14 @@ function updateStatusWithTotals() {
 		// Calculate context usage (use actual context from this turn, not cumulative tokens)
 		const contextStr = formatContextUsage(currentContextUsed, contextWindow);
 
-		const statusText = `Ready • ${tokensStr}${requestStr ? ` • ${requestStr}` : ''} • ${contextStr} • ${usageStr}`;
+		// Build status text, omitting empty parts
+		const parts = ['Ready'];
+		if (tokensStr) parts.push(tokensStr);
+		if (requestStr) parts.push(requestStr);
+		if (contextStr) parts.push(contextStr);
+		parts.push(usageStr);
+
+		const statusText = parts.join(' • ');
 		updateStatusHtml(statusText, 'ready');
 	}
 }
@@ -97,7 +104,8 @@ function updateStatusWithTotals() {
  * Shows percentage and warns if over 80%
  */
 function formatContextUsage(inputTokens, maxContext) {
-	if (!maxContext || maxContext === 0) {
+	// Return empty string if no context data yet (new conversation)
+	if (!maxContext || maxContext === 0 || !inputTokens || inputTokens === 0) {
 		return '';
 	}
 
@@ -131,7 +139,7 @@ function formatContextUsage(inputTokens, maxContext) {
  */
 function formatTokensStr(input, output) {
 	if (input === 0 && output === 0) {
-		return '0 tokens';
+		return '';
 	}
 	// Format: "12.3k↑ 4.5k↓" for input/output
 	const formatNum = (n) => {

@@ -271,6 +271,11 @@ function showCodeSuggestion(data) {
  * Request the next code suggestion from the extension
  */
 function showNextIdea() {
+	const ideaBtn = document.getElementById('ideaBtn');
+	// Don't request if button is disabled (suggestions not ready)
+	if (ideaBtn && ideaBtn.disabled) {
+		return;
+	}
 	vscode.postMessage({ type: 'requestNextSuggestion' });
 }
 

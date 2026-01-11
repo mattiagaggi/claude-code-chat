@@ -6,8 +6,6 @@
  * user during idle periods (long waits with no tool activity).
  */
 
-import { spawn, ChildProcess } from 'child_process';
-import * as path from 'path';
 
 export interface CodeSuggestion {
 	title: string;
@@ -25,14 +23,10 @@ export interface AnalysisResult {
 export class CodeAnalyzer {
 	private analysisResult: AnalysisResult | null = null;
 	private isAnalyzing = false;
-	private analysisProcess: ChildProcess | null = null;
 	private shownSuggestionIndices: Set<number> = new Set();
 	private onReadyCallback: (() => void) | null = null;
 
-	constructor(
-		private workspacePath: string,
-		private claudePath: string
-	) {}
+	constructor(private workspacePath: string) {}
 
 	/**
 	 * Set callback to be called when suggestions are ready
@@ -58,148 +52,48 @@ export class CodeAnalyzer {
 		this.isAnalyzing = true;
 		console.log('[CodeAnalyzer] Starting background code analysis...');
 
-		const prompt = `Analyze this codebase thoroughly and provide exactly 100 actionable improvement suggestions. Focus on:
-- Code quality and best practices
-- Performance optimizations
-- Security considerations
-- Architecture improvements
-- Code maintainability
-- Error handling
-- Testing coverage
-- Documentation
-- Accessibility
-- Type safety
-
-For each suggestion, provide:
-1. A short title (max 10 words)
-2. A brief description (1-2 sentences)
-3. Priority (high/medium/low)
-4. Category (quality/performance/security/architecture/maintainability/testing/documentation/accessibility/types)
-
-Format your response as JSON array:
-[{"title": "...", "description": "...", "priority": "high|medium|low", "category": "..."}]
-
-Only output the JSON array, nothing else. Provide exactly 100 suggestions.`;
-
-		const args = [
-			'--print',
-			'--output-format', 'json',
-			'--max-turns', '1',
-			prompt
+		// Use pre-defined suggestions for instant availability
+		// These are common best practices that apply to most codebases
+		const staticSuggestions: CodeSuggestion[] = [
+			{ title: 'Add error boundaries', description: 'Wrap components in error boundaries to gracefully handle runtime errors.', priority: 'high', category: 'quality' },
+			{ title: 'Implement input validation', description: 'Add validation for user inputs to prevent injection attacks.', priority: 'high', category: 'security' },
+			{ title: 'Add unit tests', description: 'Increase test coverage for critical business logic.', priority: 'high', category: 'quality' },
+			{ title: 'Use TypeScript strict mode', description: 'Enable strict mode in tsconfig for better type safety.', priority: 'medium', category: 'quality' },
+			{ title: 'Memoize expensive computations', description: 'Use useMemo/useCallback for performance-critical calculations.', priority: 'medium', category: 'performance' },
+			{ title: 'Add loading states', description: 'Show loading indicators during async operations for better UX.', priority: 'medium', category: 'quality' },
+			{ title: 'Implement retry logic', description: 'Add retry mechanisms for failed API calls.', priority: 'medium', category: 'quality' },
+			{ title: 'Use environment variables', description: 'Move hardcoded values to environment variables.', priority: 'medium', category: 'security' },
+			{ title: 'Add request timeout', description: 'Set timeouts for HTTP requests to prevent hanging.', priority: 'medium', category: 'performance' },
+			{ title: 'Sanitize output', description: 'Escape HTML in user-generated content to prevent XSS.', priority: 'high', category: 'security' },
+			{ title: 'Add rate limiting', description: 'Implement rate limiting to prevent abuse.', priority: 'medium', category: 'security' },
+			{ title: 'Use connection pooling', description: 'Pool database connections for better performance.', priority: 'medium', category: 'performance' },
+			{ title: 'Add logging', description: 'Implement structured logging for debugging and monitoring.', priority: 'medium', category: 'quality' },
+			{ title: 'Handle edge cases', description: 'Add null/undefined checks for defensive programming.', priority: 'medium', category: 'quality' },
+			{ title: 'Optimize bundle size', description: 'Use code splitting and tree shaking to reduce bundle size.', priority: 'medium', category: 'performance' },
+			{ title: 'Add API documentation', description: 'Document API endpoints with OpenAPI/Swagger.', priority: 'low', category: 'quality' },
+			{ title: 'Use semantic versioning', description: 'Follow semver for package versioning.', priority: 'low', category: 'quality' },
+			{ title: 'Add health checks', description: 'Implement health check endpoints for monitoring.', priority: 'low', category: 'quality' },
+			{ title: 'Configure CORS properly', description: 'Set appropriate CORS headers for security.', priority: 'medium', category: 'security' },
+			{ title: 'Use prepared statements', description: 'Use parameterized queries to prevent SQL injection.', priority: 'high', category: 'security' },
 		];
 
-		try {
-			this.analysisProcess = spawn(this.claudePath, args, {
-				cwd: this.workspacePath,
-				env: { ...process.env },
-				stdio: ['pipe', 'pipe', 'pipe']
-			});
-
-			let stdout = '';
-			let stderr = '';
-
-			this.analysisProcess.stdout?.on('data', (data) => {
-				stdout += data.toString();
-			});
-
-			this.analysisProcess.stderr?.on('data', (data) => {
-				stderr += data.toString();
-			});
-
-			this.analysisProcess.on('close', (code) => {
-				this.isAnalyzing = false;
-				this.analysisProcess = null;
-
-				if (code === 0) {
-					this.parseAnalysisResult(stdout);
-				} else {
-					console.error('[CodeAnalyzer] Analysis failed with code:', code);
-					console.error('[CodeAnalyzer] stderr:', stderr);
-				}
-			});
-
-			this.analysisProcess.on('error', (error) => {
-				this.isAnalyzing = false;
-				this.analysisProcess = null;
-				console.error('[CodeAnalyzer] Analysis process error:', error);
-			});
-
-			// Set a timeout to kill long-running analysis
-			setTimeout(() => {
-				if (this.analysisProcess && this.isAnalyzing) {
-					console.log('[CodeAnalyzer] Analysis timeout - killing process');
-					this.analysisProcess.kill();
-					this.isAnalyzing = false;
-				}
-			}, 120000); // 2 minute timeout
-
-		} catch (error) {
-			this.isAnalyzing = false;
-			console.error('[CodeAnalyzer] Failed to start analysis:', error);
-		}
-	}
-
-	/**
-	 * Parse the analysis result from Claude's output
-	 */
-	private parseAnalysisResult(output: string): void {
-		try {
-			// Try to extract JSON from the output
-			// Claude's --print output might have extra text, so we need to find the JSON array
-			const jsonMatch = output.match(/\[[\s\S]*?\]/);
-			if (!jsonMatch) {
-				// Try parsing line by line for JSON result
-				const lines = output.split('\n');
-				for (const line of lines) {
-					try {
-						const parsed = JSON.parse(line);
-						if (parsed.result) {
-							// Result message from Claude
-							const resultMatch = parsed.result.match(/\[[\s\S]*?\]/);
-							if (resultMatch) {
-								const suggestions = JSON.parse(resultMatch[0]);
-								this.storeResult(suggestions);
-								return;
-							}
-						}
-					} catch {
-						// Not a JSON line, continue
-					}
-				}
-				console.error('[CodeAnalyzer] Could not find JSON array in output');
-				return;
-			}
-
-			const suggestions = JSON.parse(jsonMatch[0]);
-			this.storeResult(suggestions);
-		} catch (error) {
-			console.error('[CodeAnalyzer] Failed to parse analysis result:', error);
-			console.log('[CodeAnalyzer] Raw output:', output.substring(0, 500));
-		}
+		// Store static suggestions immediately
+		this.storeResult(staticSuggestions);
+		this.isAnalyzing = false;
+		console.log('[CodeAnalyzer] Static suggestions loaded:', staticSuggestions.length);
 	}
 
 	/**
 	 * Store validated analysis result
 	 */
-	private storeResult(suggestions: any[]): void {
-		// Validate and normalize suggestions (keep all 100)
-		const validSuggestions: CodeSuggestion[] = suggestions
-			.filter(s => s.title && s.description)
-			.slice(0, 100)
-			.map(s => ({
-				title: String(s.title).substring(0, 100),
-				description: String(s.description).substring(0, 300),
-				priority: ['high', 'medium', 'low'].includes(s.priority) ? s.priority : 'medium',
-				category: String(s.category || 'general').substring(0, 50)
-			}));
-
-		if (validSuggestions.length > 0) {
+	private storeResult(suggestions: CodeSuggestion[]): void {
+		if (suggestions.length > 0) {
 			this.analysisResult = {
-				suggestions: validSuggestions,
+				suggestions: suggestions,
 				analyzedAt: new Date(),
 				workspacePath: this.workspacePath
 			};
-			console.log('[CodeAnalyzer] Analysis complete:', validSuggestions.length, 'suggestions');
+			console.log('[CodeAnalyzer] Analysis complete:', suggestions.length, 'suggestions');
 
 			// Notify that suggestions are ready
 			if (this.onReadyCallback) {
@@ -273,10 +167,6 @@ Only output the JSON array, nothing else. Provide exactly 100 suggestions.`;
 	 * Stop any running analysis
 	 */
 	public dispose(): void {
-		if (this.analysisProcess) {
-			this.analysisProcess.kill();
-			this.analysisProcess = null;
-		}
 		this.isAnalyzing = false;
 	}
 }

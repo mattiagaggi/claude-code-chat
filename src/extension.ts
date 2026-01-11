@@ -226,8 +226,7 @@ class ClaudeChatProvider {
 			return;
 		}
 
-		// Use 'claude' command (should be in PATH)
-		this.codeAnalyzer = new CodeAnalyzer(workspaceFolder, 'claude');
+		this.codeAnalyzer = new CodeAnalyzer(workspaceFolder);
 
 		// Set callback to notify UI when suggestions are ready
 		this.codeAnalyzer.onReady(() => {

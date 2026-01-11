@@ -93,7 +93,9 @@ export class PermissionRequestHandler {
 	 */
 	handlePermissionResponse(id: string, approved: boolean, alwaysAllow?: boolean): void {
 		const request = this.pendingPermissions.get(id);
-		if (!request) return;
+		if (!request) {
+			return;
+		}
 
 		const tool_name = request.request?.tool_name || request.tool_name;
 		const input = request.request?.input || request.input;
@@ -113,7 +115,9 @@ export class PermissionRequestHandler {
 	 */
 	handleUserQuestionResponse(id: string, answers: Record<string, string>): void {
 		const request = this.pendingPermissions.get(id);
-		if (!request) return;
+		if (!request) {
+			return;
+		}
 
 		const conversationId = request.conversationId;
 
@@ -214,10 +218,12 @@ export class PermissionRequestHandler {
 			} else {
 				console.error('[PermissionHandler] Conversation process died after write! ✗');
 			}
-		} else if (this.config.processManager.isRunning()) {
-			console.log('[PermissionHandler] Process is still running after write ✓');
 		} else {
-			console.error('[PermissionHandler] Process died after write! ✗');
+			if (this.config.processManager.isRunning()) {
+				console.log('[PermissionHandler] Process is still running after write ✓');
+			} else {
+				console.error('[PermissionHandler] Process died after write! ✗');
+			}
 		}
 
 		this.config.postMessage({ type: 'updatePermissionStatus', data: { id: requestId, status: approved ? 'approved' : 'denied' } });

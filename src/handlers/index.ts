@@ -12,3 +12,6 @@ export * from './StreamCallbacksFactory';
 export * from './ConversationHandler';
 export * from './PermissionRequestHandler';
 export * from './VSCodeUtilities';
+export * from './ClaudeMessageHandler';
+export * from './IdleDetectionManager';
+export * from './CodeAnalyzer';

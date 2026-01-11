@@ -272,7 +272,7 @@ class ClaudeChatProvider {
 			onOpenModelTerminal: () => openTerminal('Claude Model', 'claude --help'),
 			onOpenUsageTerminal: (t: string) => openTerminal('Claude Usage', `claude usage ${t}`),
 			onRunInstallCommand: () => openTerminal('Install Claude', 'npm install -g @anthropic/claude'),
-			onExecuteSlashCommand: (c: string) => this.sendMessageToClaude(`/${c}`),
+			onExecuteSlashCommand: (c: string) => this.executeSlashCommand(c),
 			onOpenDiff: utilOpenDiff,
 			onOpenFile: utilOpenFile,
 			onSelectImage: async () => { const p = await utilSelectImage(); if (p) this.postMessage({ type: 'imageSelected', data: p }); },
@@ -311,6 +311,19 @@ class ClaudeChatProvider {
 	}
 
 	private async sendMessageToClaude(message: string, _planMode?: boolean, thinkingMode?: boolean, skipUIDisplay?: boolean) {
+		// Detect slash commands typed in chat (e.g., "/help", "/doctor")
+		const slashMatch = message.match(/^\/(\S+)(?:\s|$)/);
+		if (slashMatch) {
+			const command = slashMatch[1];
+			// Show the command in chat
+			if (!skipUIDisplay) {
+				this.postMessage({ type: 'userInput', data: message });
+				this.conversationManager.addMessage('userInput', message, this.currentConversationId);
+			}
+			await this.executeSlashCommand(command);
+			return;
+		}
+
 		if (this.currentConversationId && this.processingConversationIds.has(this.currentConversationId)) {
 			await this.stopConversationProcess(this.currentConversationId);
 			this.postMessage({ type: 'assistantMessage', data: '⚠️ _Previous operation cancelled - starting new request..._' });
@@ -431,9 +444,197 @@ class ClaudeChatProvider {
 		this.conversationHandler.sendActiveConversations();
 	}
 
+	/**
+	 * Execute slash commands - routes to appropriate handler based on command type
+	 */
+	private async executeSlashCommand(command: string) {
+		// Commands that run claude CLI and show output in chat
+		const cliCommands: Record<string, string[]> = {
+			'help': ['--help'],
+			'doctor': ['doctor'],
+			'config': ['config'],
+			'mcp': ['mcp'],
+			'status': ['status'],
+			'model': ['model'],
+			'permissions': ['permissions'],
+			'agents': ['agents']
+		};
+
+		// Commands handled directly by the extension
+		if (command === 'clear') {
+			await this.newSession();
+			return;
+		}
+
+		if (command === 'cost' || command === 'usage') {
+			this.sendCurrentUsage();
+			this.postMessage({ type: 'assistantMessage', data: '_Use the usage panel in the header to see detailed costs._' });
+			return;
+		}
+
+		// Commands that need terminal interaction (can't capture output easily)
+		const terminalCommands = ['login', 'logout', 'init', 'terminal-setup', 'vim'];
+		if (terminalCommands.includes(command)) {
+			openTerminal(`Claude ${command}`, `claude ${command}`);
+			this.postMessage({ type: 'assistantMessage', data: `_Opening terminal for \`claude ${command}\`..._` });
+			return;
+		}
+
+		// Commands that run and show output in chat
+		if (cliCommands[command]) {
+			await this.runClaudeCommandInChat(cliCommands[command]);
+			return;
+		}
+
+		// Commands that need to be sent to Claude as regular messages (they're prompts, not CLI commands)
+		const promptCommands = ['bug', 'review', 'pr_comments', 'add-dir', 'memory', 'compact', 'rewind'];
+		if (promptCommands.includes(command)) {
+			// These are actually prompts/tasks for Claude, send them as messages
+			// Use a flag to prevent infinite loop since the message starts with /
+			this.postMessage({ type: 'userInput', data: `/${command}` });
+			this.conversationManager.addMessage('userInput', `/${command}`, this.currentConversationId);
+			// Send without the slash to Claude
+			await this.sendRegularMessage(`Please help me with the /${command} task`);
+			return;
+		}
+
+		// Fallback: try running as claude command
+		await this.runClaudeCommandInChat([command]);
+	}
+
+	/**
+	 * Run a claude CLI command and display output in chat
+	 */
+	private async runClaudeCommandInChat(args: string[]) {
+		const cp = require('child_process');
+
+		// Find claude command
+		let claudeCommand = 'claude';
+		if (process.platform === 'darwin') {
+			const fs = require('fs');
+			if (fs.existsSync('/opt/homebrew/bin/claude')) {
+				claudeCommand = '/opt/homebrew/bin/claude';
+			} else if (fs.existsSync('/usr/local/bin/claude')) {
+				claudeCommand = '/usr/local/bin/claude';
+			}
+		}
+
+		this.postMessage({ type: 'loading', data: `Running \`claude ${args.join(' ')}\`...` });
+
+		try {
+			const result = await new Promise<string>((resolve, reject) => {
+				cp.execFile(claudeCommand, args, {
+					timeout: 30000,
+					maxBuffer: 1024 * 1024,
+					env: {
+						...process.env,
+						PATH: `${process.env.PATH || ''}:/opt/homebrew/bin:/usr/local/bin`,
+						FORCE_COLOR: '0',
+						NO_COLOR: '1'
+					}
+				}, (error: any, stdout: string, stderr: string) => {
+					if (error && !stdout) {
+						reject(new Error(stderr || error.message));
+					} else {
+						resolve(stdout || stderr);
+					}
+				});
+			});
+
+			this.postMessage({ type: 'clearLoading' });
+			// Format output as code block
+			const formattedOutput = '```\n' + result.trim() + '\n```';
+			this.postMessage({ type: 'assistantMessage', data: formattedOutput });
+			this.conversationManager.addMessage('assistantMessage', formattedOutput, this.currentConversationId);
+		} catch (error: any) {
+			this.postMessage({ type: 'clearLoading' });
+			this.postMessage({ type: 'error', data: `Command failed: ${error.message}` });
+		}
+	}
+
+	/**
+	 * Send a regular message to Claude (bypasses slash command detection)
+	 */
+	private async sendRegularMessage(message: string) {
+		// This is the actual message sending logic, extracted to avoid slash command loop
+		if (this.currentConversationId && this.processingConversationIds.has(this.currentConversationId)) {
+			await this.stopConversationProcess(this.currentConversationId);
+			this.postMessage({ type: 'assistantMessage', data: '⚠️ _Previous operation cancelled - starting new request..._' });
+			this.conversationManager.addMessage('assistantMessage', '⚠️ _Previous operation cancelled - starting new request..._', this.currentConversationId);
+		}
+
+		const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+		const cwd = workspaceFolder ? workspaceFolder.uri.fsPath : process.cwd();
+		const config = vscode.workspace.getConfiguration('claudeCodeChat');
+
+		const args = ['--print', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--include-partial-messages'];
+		if (config.get<boolean>('permissions.yoloMode', false)) {
+			args.push('--dangerously-skip-permissions');
+		} else {
+			args.push('--permission-prompt-tool', 'stdio');
+		}
+		const mcpPath = this.mcpHandler.getConfigPath();
+		if (mcpPath) {
+			args.push('--mcp-config', mcpPath);
+		}
+		if (this.selectedModel && this.selectedModel !== 'default') {
+			args.push('--model', this.selectedModel);
+		}
+
+		const conversation = this.currentConversationId ? this.conversationManager.getConversation(this.currentConversationId) : null;
+		const sessionId = conversation?.sessionId;
+		if (sessionId) {
+			args.push('--resume', sessionId);
+		}
+
+		const spawnedConversationId = this.currentConversationId;
+		if (!spawnedConversationId) { this.postMessage({ type: 'error', data: 'No active conversation' }); return; }
+
+		this.processingConversationIds.add(spawnedConversationId);
+		await this.conversationManager.saveConversation(spawnedConversationId);
+		this.sendConversationList();
+		this.postMessage({ type: 'setProcessing', data: { isProcessing: true }, conversationId: spawnedConversationId });
+		this.postMessage({ type: 'loading', data: 'Claude is working...', conversationId: spawnedConversationId });
+		this.conversationHandler.sendActiveConversations();
+		this.idleDetectionManager.start();
+
+		try {
+			const proc = await this.processManager.spawnForConversation({
+				args, cwd,
+				wslEnabled: config.get('wsl.enabled', false),
+				wslDistro: config.get('wsl.distro', 'Ubuntu'),
+				nodePath: config.get('wsl.nodePath', '/usr/bin/node'),
+				claudePath: config.get('wsl.claudePath', '/usr/local/bin/claude')
+			}, spawnedConversationId);
+
+			this.processManager.writeToConversation(spawnedConversationId, JSON.stringify({
+				type: 'user', session_id: sessionId || '',
+				message: { role: 'user', content: [{ type: 'text', text: message }] },
+				parent_tool_use_id: null
+			}) + '\n');
+
+			proc.stdout?.on('data', (d: Buffer) => this.streamParser.parseChunk(d.toString(), spawnedConversationId));
+			proc.stderr?.on('data', (d: Buffer) => { const e = d.toString(); if (e.trim()) this.postMessage({ type: 'error', data: `[CLI Error] ${e}`, conversationId: spawnedConversationId }); });
+			proc.on('close', () => this.handleProcessEnd(spawnedConversationId));
+			proc.on('error', (e: Error) => this.handleProcessError(spawnedConversationId, e));
+		} catch (e: any) {
+			this.processingConversationIds.delete(spawnedConversationId);
+			this.postMessage({ type: 'clearLoading', conversationId: spawnedConversationId });
+			this.postMessage({ type: 'setProcessing', data: { isProcessing: false }, conversationId: spawnedConversationId });
+			this.postMessage({ type: 'error', data: `Failed to start: ${e.message}`, conversationId: spawnedConversationId });
+			this.conversationHandler.sendActiveConversations();
+		}
+	}
+
 	private postMessage(message: any) { (this.panel?.webview || this.webview)?.postMessage(message); }
 
 	private sendReady() {
+		// Ensure a conversation exists - create one if needed
+		if (!this.currentConversationId) {
+			this.conversationManager.startConversation();
+			this.currentConversationId = this.conversationManager.getActiveConversationId();
+		}
+
 		const isProcessing = this.currentConversationId && this.processingConversationIds.has(this.currentConversationId);
 		this.postMessage({ type: 'ready', data: isProcessing ? 'Claude is working...' : 'Ready to chat with Claude Code! Type your message below.' });
 		this.sendConversationList();

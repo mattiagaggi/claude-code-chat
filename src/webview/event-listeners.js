@@ -203,13 +203,8 @@ document.addEventListener('click', function(event) {
 	}
 });
 
-// Slash command detection
-messageInput.addEventListener('input', (e) => {
-	const value = messageInput.value;
-	if (value === '/') {
-		showSlashCommandsModal();
-	}
-});
+// Slash command detection removed - users can type /commands directly in the chat
+// The slash commands modal can still be opened via the "/" button in the UI
 
 // WSL options visibility
 document.getElementById('wsl-enabled').addEventListener('change', function() {

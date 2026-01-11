@@ -104,9 +104,24 @@ export function createImageFile(imageData: string, imageType: string): string {
 
 /**
  * Open a terminal with a specific command
+ * Reuses existing terminal with same name if available
  */
 export function openTerminal(name: string, command: string): void {
-	const terminal = vscode.window.createTerminal(name);
+	// Try to find existing terminal with same name
+	let terminal = vscode.window.terminals.find(t => t.name === name);
+
+	if (!terminal) {
+		// Create new terminal with explicit shell path for macOS
+		const shellPath = process.platform === 'darwin'
+			? '/bin/zsh'  // Use zsh on macOS (default since Catalina)
+			: undefined;   // Use VS Code default on other platforms
+
+		terminal = vscode.window.createTerminal({
+			name,
+			shellPath
+		});
+	}
+
 	terminal.show();
 	terminal.sendText(command);
 }

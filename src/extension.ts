@@ -4,6 +4,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import getHtml from './ui';
 import { ProcessManager, ConversationManager, PermissionManager } from './managers';
 import {
@@ -247,6 +248,7 @@ class ClaudeChatProvider {
 			case 'ready': return this.reinitialize();
 			case 'getConversationList': return this.sendConversationList();
 			case 'getWorkspaceFiles': return this.postMessage({ type: 'workspaceFiles', data: [] });
+			case 'getRecentFiles': return this.postMessage({ type: 'recentFiles', data: await this.getRecentWorkspaceFiles(message.searchTerm) });
 			case 'getSettings': return this.postMessage({ type: 'settings', data: utilGetSettings() });
 			case 'updateSettings': return utilUpdateSettings(message.settings);
 			case 'getClipboardText': return this.postMessage({ type: 'clipboardText', data: await utilGetClipboardText() });
@@ -672,6 +674,62 @@ class ClaudeChatProvider {
 				data: { inputTokens: conv.totalTokensInput || 0, outputTokens: conv.totalTokensOutput || 0, totalCost: conv.totalCost || 0, requestCount: reqCount, isInitialLoad: true },
 				conversationId: this.currentConversationId
 			});
+		}
+	}
+
+	private async getRecentWorkspaceFiles(searchTerm?: string): Promise<Array<{ name: string; path: string; relativePath: string; mtime: number }>> {
+		const workspaceFolders = vscode.workspace.workspaceFolders;
+		if (!workspaceFolders || workspaceFolders.length === 0) {
+			return [];
+		}
+
+		const workspaceRoot = workspaceFolders[0].uri.fsPath;
+
+		try {
+			// Find files in workspace, excluding common non-code directories
+			const pattern = '**/*';
+			const exclude = '{**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/.next/**,**/coverage/**,**/__pycache__/**,**/.venv/**,**/venv/**,**/*.min.js,**/*.min.css}';
+
+			const files = await vscode.workspace.findFiles(pattern, exclude, 100);
+
+			// Get file stats for sorting by mtime
+			const fileInfos = await Promise.all(
+				files.map(async (file) => {
+					try {
+						const stat = await vscode.workspace.fs.stat(file);
+						const relativePath = path.relative(workspaceRoot, file.fsPath);
+						const name = path.basename(file.fsPath);
+						return {
+							name,
+							path: file.fsPath,
+							relativePath,
+							mtime: stat.mtime
+						};
+					} catch {
+						return null;
+					}
+				})
+			);
+
+			// Filter out nulls and apply search filter if provided
+			let filtered = fileInfos.filter((f): f is NonNullable<typeof f> => f !== null);
+
+			if (searchTerm) {
+				const term = searchTerm.toLowerCase();
+				filtered = filtered.filter(f =>
+					f.name.toLowerCase().includes(term) ||
+					f.relativePath.toLowerCase().includes(term)
+				);
+			}
+
+			// Sort by most recently modified
+			filtered.sort((a, b) => b.mtime - a.mtime);
+
+			// Return top 50 results
+			return filtered.slice(0, 50);
+		} catch (error) {
+			console.error('Error getting recent files:', error);
+			return [];
 		}
 	}
 

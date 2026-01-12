@@ -423,6 +423,10 @@ window.addEventListener('message', event => {
 			renderFileList();
 			break;
 
+		case 'recentFiles':
+			updateFileAutocompleteList(message.data);
+			break;
+
 		case 'conversationList':
 			displayConversationList(message.data);
 			break;

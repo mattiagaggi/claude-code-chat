@@ -28,20 +28,25 @@ messageInput.addEventListener('keydown', (e) => {
 		return;
 	}
 
+	// Handle file autocomplete keyboard navigation
+	if (handleFileAutocompleteKeydown(e)) {
+		return;
+	}
+
 	if (e.key === 'Enter' && !e.shiftKey) {
 		e.preventDefault();
 		hideSlashAutocomplete();
+		hideFileAutocomplete();
 		const sendBtn = document.getElementById('sendBtn');
 		if (sendBtn.disabled) return;
 		sendMessage();
-	} else if (e.key === '@' && !e.ctrlKey && !e.metaKey) {
-		setTimeout(() => {
-			showFilePicker();
-		}, 0);
 	} else if (e.key === 'Escape') {
 		if (slashAutocompleteVisible) {
 			e.preventDefault();
 			hideSlashAutocomplete();
+		} else if (fileAutocompleteVisible) {
+			e.preventDefault();
+			hideFileAutocomplete();
 		} else if (filePickerModal.style.display === 'flex') {
 			e.preventDefault();
 			hideFilePicker();
@@ -217,12 +222,14 @@ document.addEventListener('click', function(event) {
 // Slash command autocomplete - show dropdown when typing /
 messageInput.addEventListener('input', () => {
 	checkSlashAutocomplete();
+	checkFileAutocomplete();
 });
 
 // Hide autocomplete when input loses focus (with delay to allow click on items)
 messageInput.addEventListener('blur', () => {
 	setTimeout(() => {
 		hideSlashAutocomplete();
+		hideFileAutocomplete();
 	}, 200);
 });
 

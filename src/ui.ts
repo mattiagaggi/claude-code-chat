@@ -73,6 +73,12 @@ const getHtml = (isTelemetryEnabled: boolean, styleUri?: string, scriptUri?: str
 					<!-- Commands will be populated dynamically -->
 				</div>
 			</div>
+			<!-- File mention autocomplete dropdown -->
+			<div id="fileAutocomplete" class="file-autocomplete" style="display: none;">
+				<div class="file-autocomplete-list" id="fileAutocompleteList">
+					<!-- Files will be populated dynamically -->
+				</div>
+			</div>
 			<div class="input-modes">
 				<div class="mode-toggle">
 					<span onclick="togglePlanMode()">Plan First</span>
@@ -807,6 +813,7 @@ const getHtml = (isTelemetryEnabled: boolean, styleUri?: string, scriptUri?: str
 		<script src="${scriptUri.replace('script.js', 'message-rendering.js')}"></script>
 		<script src="${scriptUri.replace('script.js', 'tool-display.js')}"></script>
 		<script src="${scriptUri.replace('script.js', 'file-picker.js')}"></script>
+		<script src="${scriptUri.replace('script.js', 'file-autocomplete.js')}"></script>
 		<script src="${scriptUri.replace('script.js', 'session-management.js')}"></script>
 		<script src="${scriptUri.replace('script.js', 'conversation-tabs.js')}"></script>
 		<script src="${scriptUri.replace('script.js', 'permissions.js')}"></script>

@@ -350,7 +350,7 @@ suite('PermissionRequestHandler Tests', () => {
 	});
 
 	suite('handleUserQuestionResponse', () => {
-		test('Should send user answer back to Claude', async () => {
+		test('Should send user answer back to Claude with correct format', async () => {
 			// Create pending question
 			await handler.handleControlRequest({
 				type: 'control_request',
@@ -360,13 +360,124 @@ suite('PermissionRequestHandler Tests', () => {
 			});
 			mockProcessManager.clearWrittenMessages();
 
-			handler.handleUserQuestionResponse('q-answer', { 'q1': 'A' });
+			handler.handleUserQuestionResponse('q-answer', { 'q0': '0' });
 
 			const written = mockProcessManager.getWrittenMessages();
 			assert.strictEqual(written.length, 1);
 			const response = JSON.parse(written[0].message.trim());
 			assert.strictEqual(response.type, 'control_response');
-			assert.deepStrictEqual(response.response.answers, { 'q1': 'A' });
+			assert.strictEqual(response.response.subtype, 'success');
+			assert.strictEqual(response.response.request_id, 'q-answer');
+			assert.deepStrictEqual(response.response.response.answers, { 'q0': '0' });
+		});
+
+		test('Should handle multiple choice single select response', async () => {
+			await handler.handleControlRequest({
+				type: 'control_request',
+				request_id: 'q-single',
+				tool_name: 'AskUserQuestion',
+				input: {
+					questions: [{
+						header: 'Database',
+						question: 'Which database should we use?',
+						multiSelect: false,
+						options: [
+							{ label: 'PostgreSQL', description: 'Relational database' },
+							{ label: 'MongoDB', description: 'Document database' },
+							{ label: 'Redis', description: 'In-memory store' }
+						]
+					}]
+				}
+			});
+			mockProcessManager.clearWrittenMessages();
+
+			// User selects second option (index 1)
+			handler.handleUserQuestionResponse('q-single', { 'q0': '1' });
+
+			const written = mockProcessManager.getWrittenMessages();
+			const response = JSON.parse(written[0].message.trim());
+			assert.strictEqual(response.type, 'control_response');
+			assert.strictEqual(response.response.subtype, 'success');
+			assert.deepStrictEqual(response.response.response.answers, { 'q0': '1' });
+		});
+
+		test('Should handle multiple choice multi-select response', async () => {
+			await handler.handleControlRequest({
+				type: 'control_request',
+				request_id: 'q-multi',
+				tool_name: 'AskUserQuestion',
+				input: {
+					questions: [{
+						header: 'Features',
+						question: 'Which features do you want?',
+						multiSelect: true,
+						options: [
+							{ label: 'Auth', description: 'Authentication' },
+							{ label: 'API', description: 'REST API' },
+							{ label: 'DB', description: 'Database' },
+							{ label: 'Cache', description: 'Caching' }
+						]
+					}]
+				}
+			});
+			mockProcessManager.clearWrittenMessages();
+
+			// User selects multiple options (indices 0, 2, 3)
+			handler.handleUserQuestionResponse('q-multi', { 'q0': '0,2,3' });
+
+			const written = mockProcessManager.getWrittenMessages();
+			const response = JSON.parse(written[0].message.trim());
+			assert.strictEqual(response.type, 'control_response');
+			assert.deepStrictEqual(response.response.response.answers, { 'q0': '0,2,3' });
+		});
+
+		test('Should handle multiple questions response', async () => {
+			await handler.handleControlRequest({
+				type: 'control_request',
+				request_id: 'q-multiple',
+				tool_name: 'AskUserQuestion',
+				input: {
+					questions: [
+						{
+							header: 'Framework',
+							question: 'Which framework?',
+							multiSelect: false,
+							options: [{ label: 'React' }, { label: 'Vue' }]
+						},
+						{
+							header: 'Styling',
+							question: 'Which CSS approach?',
+							multiSelect: false,
+							options: [{ label: 'Tailwind' }, { label: 'CSS Modules' }]
+						},
+						{
+							header: 'Testing',
+							question: 'Which test frameworks?',
+							multiSelect: true,
+							options: [{ label: 'Jest' }, { label: 'Vitest' }, { label: 'Cypress' }]
+						}
+					]
+				}
+			});
+			mockProcessManager.clearWrittenMessages();
+
+			// User answers all questions
+			handler.handleUserQuestionResponse('q-multiple', {
+				'q0': '0',      // React
+				'q1': '1',      // CSS Modules
+				'q2': '0,2'     // Jest and Cypress
+			});
+
+			const written = mockProcessManager.getWrittenMessages();
+			const response = JSON.parse(written[0].message.trim());
+			assert.strictEqual(response.type, 'control_response');
+			assert.strictEqual(response.response.subtype, 'success');
+			assert.strictEqual(response.response.request_id, 'q-multiple');
+			assert.deepStrictEqual(response.response.response.answers, {
+				'q0': '0',
+				'q1': '1',
+				'q2': '0,2'
+			});
 		});
 
 		test('Should write to specific conversation when conversationId is set', async () => {
@@ -388,6 +499,31 @@ suite('PermissionRequestHandler Tests', () => {
 			handler.handleUserQuestionResponse('unknown', { answer: 'test' });
 
 			assert.strictEqual(mockProcessManager.getWrittenMessages().length, 0);
+		});
+
+		test('Should format response matching permission response structure', async () => {
+			// This test verifies the user question response uses the same nested
+			// structure as permission responses for consistency with Claude SDK
+			await handler.handleControlRequest({
+				type: 'control_request',
+				request_id: 'q-format',
+				tool_name: 'AskUserQuestion',
+				input: { questions: [{ question: 'Test?', options: ['Yes', 'No'] }] }
+			});
+			mockProcessManager.clearWrittenMessages();
+
+			handler.handleUserQuestionResponse('q-format', { 'q0': '0' });
+
+			const written = mockProcessManager.getWrittenMessages();
+			const response = JSON.parse(written[0].message.trim());
+
+			// Verify nested structure matches permission response format
+			assert.strictEqual(response.type, 'control_response');
+			assert.ok(response.response, 'Should have nested response object');
+			assert.strictEqual(response.response.subtype, 'success');
+			assert.strictEqual(response.response.request_id, 'q-format');
+			assert.ok(response.response.response, 'Should have doubly nested response');
+			assert.ok(response.response.response.answers, 'Should have answers in nested response');
 		});
 	});
 

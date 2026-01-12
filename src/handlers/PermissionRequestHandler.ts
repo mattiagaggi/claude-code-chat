@@ -124,8 +124,11 @@ export class PermissionRequestHandler {
 		// Send answer back to Claude
 		const response = {
 			type: 'control_response',
-			request_id: id,
-			response: { answers }
+			response: {
+				subtype: 'success',
+				request_id: id,
+				response: { answers }
+			}
 		};
 
 		console.log('[PermissionHandler] Sending user question response:', response, 'to conversation:', conversationId);

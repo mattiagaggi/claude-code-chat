@@ -9,7 +9,8 @@ import * as vscode from 'vscode';
 import { ProcessManager, ConversationManager } from '../managers';
 import { StreamParser } from './StreamParser';
 
-export interface ClaudeMessageHandlerConfig {
+export
+	interface ClaudeMessageHandlerConfig {
 	processManager: ProcessManager;
 	conversationManager: ConversationManager;
 	streamParser: StreamParser;

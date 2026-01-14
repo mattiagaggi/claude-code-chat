@@ -363,3 +363,35 @@ function copyMessageContent(messageDiv) {
 		});
 	}
 }
+
+function openGraphView() {
+	sendStats('Open graph view');
+	vscode.postMessage({
+		type: 'openGraphView'
+	});
+}
+
+function toggleDevMode() {
+	sendStats('Toggle dev mode');
+	const devModeBtn = document.getElementById('devModeBtn');
+	const isActive = devModeBtn?.classList.contains('active');
+
+	vscode.postMessage({
+		type: 'toggleDevMode',
+		enable: !isActive
+	});
+
+	// Update button state (will be confirmed by extension)
+	if (devModeBtn) {
+		if (isActive) {
+			devModeBtn.classList.remove('active');
+			devModeBtn.style.background = '';
+			devModeBtn.title = 'Dev Mode - Make this extension self-modifiable';
+		} else {
+			devModeBtn.classList.add('active');
+			devModeBtn.style.background = 'var(--vscode-button-background)';
+			devModeBtn.style.color = 'var(--vscode-button-foreground)';
+			devModeBtn.title = 'Dev Mode Active - Extension is self-modifiable';
+		}
+	}
+}

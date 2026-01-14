@@ -8,3 +8,4 @@
 export * from './ProcessManager';
 export * from './ConversationManager';
 export * from './PermissionManager';
+export * from './DevModeManager';

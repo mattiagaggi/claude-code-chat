@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import getHtml from './ui';
-import { ProcessManager, ConversationManager, PermissionManager } from './managers';
+import { ProcessManager, ConversationManager, PermissionManager, DevModeManager } from './managers';
 import {
 	WebviewMessageHandler,
 	StreamParser,
@@ -35,6 +35,20 @@ export function activate(context: vscode.ExtensionContext) {
 		new ClaudeChatProvider(context.extensionUri, context, 2),
 		new ClaudeChatProvider(context.extensionUri, context, 3)
 	];
+
+	// Initialize Dev Mode Manager
+	const devModeManager = new DevModeManager(context.extensionUri.fsPath);
+	context.subscriptions.push(devModeManager);
+
+	// Set up reload callback to save conversation state before reload
+	devModeManager.setReloadCallback(async () => {
+		for (const provider of providers) {
+			await provider.saveConversationState();
+		}
+	});
+
+	// Share DevModeManager with all providers
+	providers.forEach(p => p.setDevModeManager(devModeManager));
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand('claude-code-chat.openChat', (column?: vscode.ViewColumn) => {
@@ -95,6 +109,7 @@ class ClaudeChatProvider {
 	private processManager: ProcessManager;
 	private conversationManager: ConversationManager;
 	private permissionManager: PermissionManager;
+	private devModeManager?: DevModeManager;
 	private messageHandler: WebviewMessageHandler;
 	private streamParser: StreamParser;
 	private mcpHandler: MCPHandler;
@@ -260,6 +275,27 @@ class ClaudeChatProvider {
 			case 'selectImageFile': { const p = await utilSelectImageFile(); if (p) this.postMessage({ type: 'imagePath', path: p }); return; }
 			case 'copyToClipboard': return vscode.env.clipboard.writeText(message.text);
 			case 'requestNextSuggestion': return this.idleDetectionManager.showNextSuggestion();
+			case 'toggleDevMode': {
+				if (!this.devModeManager) {
+					vscode.window.showErrorMessage('Dev Mode Manager not initialized');
+					return;
+				}
+				if (message.enable) {
+					await this.devModeManager.enableDevMode();
+				} else {
+					const choice = await vscode.window.showInformationMessage(
+						'Disable Dev Mode?',
+						'Keep Changes',
+						'Rollback Changes'
+					);
+					if (choice === 'Rollback Changes') {
+						await this.devModeManager.disableDevMode(true);
+					} else if (choice === 'Keep Changes') {
+						await this.devModeManager.disableDevMode(false);
+					}
+				}
+				return;
+			}
 		}
 		await this.messageHandler.handleMessage(message);
 	}
@@ -349,6 +385,13 @@ class ClaudeChatProvider {
 		if (thinkingMode) {
 			message = `${config.get<string>('thinking.intensity', 'think').toUpperCase().replace('-', ' ')} THROUGH THIS STEP BY STEP: \n${message}`;
 		}
+
+		// Add source code context when Dev Mode is active
+		if (this.devModeManager?.isActive()) {
+			const sourceContext = await this.devModeManager.getSourceCodeContext();
+			message = `${sourceContext}\n\n---\n\nUser request: ${message}`;
+		}
+
 		if (this.selectedModel && this.selectedModel !== 'default') {
 			args.push('--model', this.selectedModel);
 		}
@@ -759,6 +802,20 @@ class ClaudeChatProvider {
 				setTimeout(() => { deco.dispose(); disp.dispose(); }, 30000);
 			}
 		} catch (e) { console.error('[openFileWithEditHighlight]', e); }
+	}
+
+	/**
+	 * Set Dev Mode Manager for self-modification
+	 */
+	setDevModeManager(devModeManager: DevModeManager): void {
+		this.devModeManager = devModeManager;
+	}
+
+	/**
+	 * Save conversation state (called before Dev Mode reload)
+	 */
+	async saveConversationState(): Promise<void> {
+		await this.conversationManager.saveConversation();
 	}
 
 	async dispose() {

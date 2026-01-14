@@ -260,16 +260,41 @@ export class DevModeManager {
                 await this.autoCommit();
             }
 
-            // Reload extension
-            await this.reloadExtension();
+            // Ask user before reloading to prevent breaking UI
+            const choice = await vscode.window.showInformationMessage(
+                '🔄 Extension compiled successfully! Reload to apply changes?',
+                'Reload Now',
+                'Reload Later',
+                'Test First'
+            );
+
+            if (choice === 'Reload Now') {
+                await this.reloadExtension(true);
+            } else if (choice === 'Test First') {
+                vscode.window.showInformationMessage(
+                    'Review changes with "git diff", then reload manually when ready.',
+                    'Show Diff',
+                    'Reload Now'
+                ).then(async (diffChoice) => {
+                    if (diffChoice === 'Show Diff') {
+                        vscode.commands.executeCommand('git.openChange');
+                    } else if (diffChoice === 'Reload Now') {
+                        await this.reloadExtension(true);
+                    }
+                });
+            }
+            // If "Reload Later", do nothing - user can reload manually
         } catch (error) {
             this.log(`❌ Compilation failed: ${error}`);
             vscode.window.showErrorMessage(
-                'Extension compilation failed. Check Dev Mode output.',
-                'View Output'
-            ).then(choice => {
+                '❌ Extension compilation failed. Changes NOT applied.',
+                'View Output',
+                'Rollback'
+            ).then(async (choice) => {
                 if (choice === 'View Output') {
                     this.outputChannel.show();
+                } else if (choice === 'Rollback') {
+                    await this.disableDevMode(true);
                 }
             });
         }
@@ -279,8 +304,40 @@ export class DevModeManager {
      * Compile the extension
      */
     private async compile(): Promise<void> {
+        // Build comprehensive PATH with common npm installation locations
+        const homedir = process.env.HOME || process.env.USERPROFILE || '';
+        const commonPaths = [
+            process.env.PATH || '',
+            '/usr/local/bin',
+            '/opt/homebrew/bin',  // Homebrew on Apple Silicon
+            '/usr/bin',
+            '/bin',
+            `${homedir}/.nvm/versions/node/*/bin`,
+            `${homedir}/.npm-global/bin`,
+            `${homedir}/.yarn/bin`,
+            '/opt/homebrew/opt/node/bin'
+        ].filter(Boolean).join(':');
+
+        // Try to get shell PATH as additional fallback
+        let fullPath = commonPaths;
+        try {
+            const shell = process.env.SHELL || '/bin/bash';
+            const pathCommand = shell.includes('fish')
+                ? `${shell} -c 'echo $PATH'`
+                : `${shell} -l -c 'echo $PATH'`;
+            const { stdout: pathOutput } = await execAsync(pathCommand, { timeout: 2000 });
+            if (pathOutput.trim()) {
+                fullPath = `${commonPaths}:${pathOutput.trim()}`;
+            }
+        } catch (e) {
+            this.log(`Using fallback PATH (shell PATH unavailable)`);
+        }
+
+        this.log(`Running: npm run compile with PATH=${fullPath.substring(0, 100)}...`);
         const { stdout, stderr } = await execAsync('npm run compile', {
-            cwd: this.extensionPath
+            cwd: this.extensionPath,
+            env: { ...process.env, PATH: fullPath },
+            shell: '/bin/bash'
         });
 
         if (stderr) {
@@ -294,7 +351,7 @@ export class DevModeManager {
     /**
      * Reload the extension (soft reload - preserves UI state)
      */
-    private async reloadExtension(): Promise<void> {
+    private async reloadExtension(skipPrompt: boolean = false): Promise<void> {
         this.log('🔄 Soft reloading extension (preserving UI state)...');
 
         // Call the callback to save state before reload
@@ -307,14 +364,18 @@ export class DevModeManager {
             }
         }
 
-        // Show user-friendly notification
-        const choice = await vscode.window.showInformationMessage(
-            '🔄 Extension code updated! Reload to apply changes?',
-            'Reload Now',
-            'Reload Later'
-        );
+        // Show user-friendly notification (unless already prompted)
+        let shouldReload = skipPrompt;
+        if (!skipPrompt) {
+            const choice = await vscode.window.showInformationMessage(
+                '🔄 Extension code updated! Reload to apply changes?',
+                'Reload Now',
+                'Reload Later'
+            );
+            shouldReload = choice === 'Reload Now';
+        }
 
-        if (choice === 'Reload Now') {
+        if (shouldReload) {
             try {
                 // Restart extension host (this reloads the extension but preserves workspace)
                 await vscode.commands.executeCommand('workbench.action.restartExtensionHost');

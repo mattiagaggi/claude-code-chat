@@ -51,6 +51,30 @@ export class DevModeManager {
             return;
         }
 
+        // Check if this is an installed extension vs development
+        const isInstalledExtension = this.extensionPath.includes('.vscode/extensions') ||
+                                     this.extensionPath.includes('.vscode-insiders/extensions') ||
+                                     this.extensionPath.includes('\\Microsoft VS Code\\extensions') ||
+                                     this.extensionPath.includes('\\Microsoft VS Code Insiders\\extensions');
+
+        if (isInstalledExtension) {
+            const choice = await vscode.window.showWarningMessage(
+                '⚠️ Dev Mode detected installed extension. Changes will be lost on updates. It\'s recommended to use Dev Mode only in development.\n\nDo you want to continue anyway?',
+                'Continue (Not Recommended)',
+                'Cancel',
+                'Learn More'
+            );
+
+            if (choice === 'Learn More') {
+                vscode.window.showInformationMessage(
+                    'Dev Mode is designed for extension development (F5 debug mode). When used on an installed extension, changes are made to ~/.vscode/extensions/ and will be overwritten on updates. Clone the repository and run in development mode instead.'
+                );
+                return;
+            } else if (choice !== 'Continue (Not Recommended)') {
+                return; // User cancelled
+            }
+        }
+
         this.log('🛠️ Enabling Dev Mode...');
 
         // Create snapshot before enabling

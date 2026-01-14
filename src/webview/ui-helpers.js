@@ -363,3 +363,10 @@ function copyMessageContent(messageDiv) {
 		});
 	}
 }
+
+function openGraphView() {
+	sendStats('Open graph view');
+	vscode.postMessage({
+		type: 'openGraphView'
+	});
+}

@@ -260,6 +260,7 @@ class ClaudeChatProvider {
 			case 'selectImageFile': { const p = await utilSelectImageFile(); if (p) this.postMessage({ type: 'imagePath', path: p }); return; }
 			case 'copyToClipboard': return vscode.env.clipboard.writeText(message.text);
 			case 'requestNextSuggestion': return this.idleDetectionManager.showNextSuggestion();
+			case 'openGraphView': return this.openGraphExplorer();
 		}
 		await this.messageHandler.handleMessage(message);
 	}
@@ -759,6 +760,23 @@ class ClaudeChatProvider {
 				setTimeout(() => { deco.dispose(); disp.dispose(); }, 30000);
 			}
 		} catch (e) { console.error('[openFileWithEditHighlight]', e); }
+	}
+
+	private async openGraphExplorer() {
+		try {
+			// Try to open the graphExplorer view if it exists
+			await vscode.commands.executeCommand('graphExplorer.focus');
+		} catch (error) {
+			// If the graph extension isn't installed, show a helpful message
+			const choice = await vscode.window.showInformationMessage(
+				'The Graph Explorer extension is not installed. Would you like to open it in the Extensions Marketplace?',
+				'Open Marketplace',
+				'Cancel'
+			);
+			if (choice === 'Open Marketplace') {
+				vscode.env.openExternal(vscode.Uri.parse('vscode:extension/mattia-gaggi.vscode-graph-extension'));
+			}
+		}
 	}
 
 	async dispose() {
